@@ -34,4 +34,4 @@ start from the step that failed — earlier steps are idempotent.
 
 ## Differences from Ubuntu 22.04
 
-See [`platforms/ubuntu-22.04/README.md`](../../ubuntu-22.04/README.md).
+See [`platforms/ubuntu-22.04/README.md`](../ubuntu-22.04/README.md).

@@ -14,13 +14,14 @@ require_not_root
 
 SSH_KEY="$HOME/.ssh/id_ed25519"
 
+mkdir -p "$HOME/.ssh"
+chmod 700 "$HOME/.ssh"
+
 log_info "Checking for existing SSH key at $SSH_KEY..."
 if [ -f "$SSH_KEY" ]; then
     log_ok "SSH key already exists, skipping generation"
 else
     log_info "Generating ED25519 SSH keypair..."
-    mkdir -p "$HOME/.ssh"
-    chmod 700 "$HOME/.ssh"
     ssh-keygen -t ed25519 -C "$(hostname)-$(date +%Y-%m-%d)" -f "$SSH_KEY" -N ""
     log_ok "SSH keypair generated at $SSH_KEY"
 fi

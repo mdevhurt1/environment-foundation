@@ -23,10 +23,11 @@ else
 fi
 
 log_info "Checking default shell..."
-if [ "$SHELL" = "$(command -v zsh)" ]; then
+CURRENT_SHELL="$(getent passwd "$USER" | cut -d: -f7)"
+if [ "$CURRENT_SHELL" = "$(command -v zsh)" ]; then
     log_ok "zsh is already the default shell, skipping"
 else
-    chsh -s "$(command -v zsh)" "$USER"
+    sudo usermod -s "$(command -v zsh)" "$USER"
     log_ok "Default shell set to zsh — open a new terminal for this to take effect"
 fi
 

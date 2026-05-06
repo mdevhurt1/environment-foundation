@@ -12,6 +12,8 @@ source "$REPO_ROOT/shared/logging.sh"
 
 require_not_root
 
+export DEBIAN_FRONTEND=noninteractive
+
 log_info "Checking for existing Steam installation..."
 if command -v steam &>/dev/null; then
     log_ok "Steam already installed, skipping"
@@ -20,11 +22,11 @@ fi
 
 log_info "Enabling i386 (32-bit) architecture — required for many Steam games..."
 sudo dpkg --add-architecture i386
-sudo apt-get update -y
+sudo -E apt-get update -y
 log_ok "i386 architecture enabled"
 
 log_info "Installing Steam..."
-sudo apt-get install -y steam-installer
+sudo -E apt-get install -y steam-installer
 log_ok "Steam installed"
 
 log_info "Steam is installed. Launch it from the application menu or run: steam"

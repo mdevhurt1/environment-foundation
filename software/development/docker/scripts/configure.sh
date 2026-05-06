@@ -11,7 +11,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 source "$REPO_ROOT/shared/logging.sh"
 
 require_not_root
-require_command docker "install Docker first: bash $(dirname "$SCRIPT_DIR")/install.sh"
+require_command docker "install Docker first: bash $SCRIPT_DIR/install.sh"
 
 log_info "Adding $USER to the docker group..."
 if groups "$USER" | grep -q '\bdocker\b'; then

@@ -1,0 +1,18 @@
+# Planning artifacts (local only, never pushed)
+docs/superpowers/
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+
+# Editor artifacts
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log

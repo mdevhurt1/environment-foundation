@@ -11,6 +11,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 source "$REPO_ROOT/shared/logging.sh"
 
 require_not_root
+export DEBIAN_FRONTEND=noninteractive
 
 PACKAGES=(
     build-essential

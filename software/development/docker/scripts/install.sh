@@ -11,6 +11,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 source "$REPO_ROOT/shared/logging.sh"
 
 require_not_root
+export DEBIAN_FRONTEND=noninteractive
 require_command curl "run platforms/ubuntu-24.04/scripts/02-core-packages.sh first"
 
 log_info "Checking for existing Docker installation..."

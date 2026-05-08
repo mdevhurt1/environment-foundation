@@ -1,5 +1,6 @@
 # Planning artifacts (local only, never pushed)
 docs/superpowers/
+*CLAUDE.md
 
 # macOS
 .DS_Store

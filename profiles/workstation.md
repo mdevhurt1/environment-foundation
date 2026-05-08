@@ -27,6 +27,7 @@ Run all baseline steps in order:
 - [ ] [Claude Code — configure](../software/development/claude-code/scripts/configure.sh) `[dev]`
 - [ ] [Docker — install](../software/development/docker/scripts/install.sh) `[dev]`
 - [ ] [Docker — configure](../software/development/docker/scripts/configure.sh) `[dev]`
+- [ ] [Plane — configure](../software/development/claude-code/integrations/plane/README.md) `[workstation]`
 
 ### 3. Gaming *(skip on workplace or headless machines)*
 

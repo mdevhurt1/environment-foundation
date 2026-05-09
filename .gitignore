@@ -1,6 +1,7 @@
 # Planning artifacts (local only, never pushed)
 docs/superpowers/
 *CLAUDE.md
+!software/development/claude-code/canonical/CLAUDE.md
 
 # macOS
 .DS_Store
@@ -17,3 +18,12 @@ Thumbs.db
 
 # Logs
 *.log
+
+# === Claude Code SOP guardrails ===
+# Never commit decrypted secrets or local-only Claude state
+**/settings.local.json
+**/*.dec.json
+**/*.dec.yaml
+**/*.decrypted
+# Session mode markers written by cc-functions.sh — local only
+.cc-mode

@@ -1,0 +1,58 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wc:*)",
+      "Bash(echo:*)",
+      "Bash(test:*)",
+      "Bash(command:*)",
+      "Bash(ssh:*)",
+      "Bash(scp:*)",
+      "Bash(curl:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git log:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git -C * show *)",
+      "Bash(git -C * log *)",
+      "Bash(git -C * diff *)",
+      "Bash(git ls-tree *)",
+      "Bash(python -m pytest:*)",
+      "Read(//home/*)",
+      "Read(//tmp/**)",
+      "Read(//usr/local/bin/**)"
+    ],
+    "defaultMode": "default"
+  },
+  "sandbox": {
+    "network": {
+      "allowLocalBinding": true
+    }
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "$HOME/.claude/statusline-command.sh"
+  },
+  "enabledPlugins": {
+    "superpowers@claude-plugins-official": true,
+    "frontend-design@claude-plugins-official": true,
+    "code-review@claude-plugins-official": true,
+    "code-simplifier@claude-plugins-official": true,
+    "skill-creator@claude-plugins-official": true,
+    "playwright@claude-plugins-official": true,
+    "feature-dev@claude-plugins-official": true,
+    "claude-md-management@claude-plugins-official": true,
+    "github@claude-plugins-official": true
+  },
+  "effortLevel": "high",
+  "advisorModel": "opus",
+  "autoUpdatesChannel": "stable",
+  "skipDangerousModePermissionPrompt": true,
+  "theme": "auto",
+  "editorMode": "normal",
+  "preferredNotifChannel": "auto",
+  "remoteControlAtStartup": true,
+  "inputNeededNotifEnabled": true,
+  "agentPushNotifEnabled": true,
+  "model": "opus"
+}

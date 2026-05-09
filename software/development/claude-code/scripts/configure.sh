@@ -1,40 +1,96 @@
 #!/usr/bin/env bash
-# Description: Sets up ~/.claude/settings.json and prints API key instructions
+# Description: Deploys the canonical Claude Code dotfiles into ~/.claude/
+#              via symlinks, sources cc-functions.sh from ~/.bashrc, and
+#              points the user at environment-secrets for sops setup.
 # Profiles:    workstation, workplace
 # Platforms:   ubuntu-24.04, ubuntu-22.04 (WSL supported)
 # Dependencies: claude installed (install.sh)
+# Idempotent.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
+# shellcheck source=../../../../shared/logging.sh
+# shellcheck disable=SC1091
 source "$REPO_ROOT/shared/logging.sh"
 
 require_not_root
 require_command claude "install Claude Code first: bash $SCRIPT_DIR/install.sh"
+require_command jq
 
 CLAUDE_DIR="$HOME/.claude"
-SETTINGS="$CLAUDE_DIR/settings.json"
-
-log_info "Setting up Claude Code configuration..."
+CANONICAL="$REPO_ROOT/software/development/claude-code/canonical"
+BACKUP_DIR="$CLAUDE_DIR/.backup-$(date +%Y%m%d-%H%M%S)"
 
 mkdir -p "$CLAUDE_DIR"
 
-if [ -f "$SETTINGS" ]; then
-    log_warn "$SETTINGS already exists — skipping to avoid overwriting your config"
-    log_info "Review your existing settings at: $SETTINGS"
-else
-    cat > "$SETTINGS" << 'EOF'
-{
-  "theme": "dark",
-  "autoUpdates": true
+# ---- backup any non-symlink files we're about to replace ----
+backup_if_real() {
+    local target="$1"
+    if [ -e "$target" ] && [ ! -L "$target" ]; then
+        mkdir -p "$BACKUP_DIR"
+        local rel="${target#"$CLAUDE_DIR"/}"
+        mkdir -p "$BACKUP_DIR/$(dirname "$rel")"
+        mv "$target" "$BACKUP_DIR/$rel"
+        log_warn "backed up existing $target -> $BACKUP_DIR/$rel"
+    fi
 }
+
+# ---- symlink each canonical file/dir ----
+link() {
+    local src="$1" dst="$2"
+    backup_if_real "$dst"
+    ln -sfn "$src" "$dst"
+    log_ok "linked $dst -> $src"
+}
+
+log_info "Deploying canonical dotfiles from $CANONICAL"
+link "$CANONICAL/CLAUDE.md"               "$CLAUDE_DIR/CLAUDE.md"
+link "$CANONICAL/settings.json"           "$CLAUDE_DIR/settings.json"
+link "$CANONICAL/statusline-command.sh"   "$CLAUDE_DIR/statusline-command.sh"
+
+# Skills: link the whole dir, but only after warning if there are existing
+# non-canonical skills that would be hidden.
+if [ -d "$CLAUDE_DIR/skills" ] && [ ! -L "$CLAUDE_DIR/skills" ]; then
+    existing=$(find "$CLAUDE_DIR/skills" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)
+    if [ "$existing" -gt 0 ]; then
+        log_warn "$CLAUDE_DIR/skills contains $existing skill(s); these will be moved to backup"
+        log_warn "review them and copy any you want to canonical/skills/"
+        backup_if_real "$CLAUDE_DIR/skills"
+    else
+        rmdir "$CLAUDE_DIR/skills"
+    fi
+fi
+ln -sfn "$CANONICAL/skills" "$CLAUDE_DIR/skills"
+log_ok "linked $CLAUDE_DIR/skills -> $CANONICAL/skills"
+
+# cc-functions in a stable location too
+link "$CANONICAL/shell/cc-functions.sh" "$CLAUDE_DIR/cc-functions.sh"
+
+# ---- ~/.bashrc source line (idempotent) ----
+SOURCE_LINE='[ -f ~/.claude/cc-functions.sh ] && source ~/.claude/cc-functions.sh'
+if ! grep -Fxq "$SOURCE_LINE" "$HOME/.bashrc" 2>/dev/null; then
+    cat >> "$HOME/.bashrc" <<EOF
+
+# Claude Code workflow wrappers (cc-explore, cc-build, cc-continue)
+$SOURCE_LINE
 EOF
-    log_ok "Created $SETTINGS with baseline configuration"
+    log_ok "added cc-functions source line to ~/.bashrc"
+else
+    log_info "$HOME/.bashrc already sources cc-functions.sh (skip)"
 fi
 
-log_warn "Action required: set your ANTHROPIC_API_KEY"
-log_info "Add the following to ~/.zshrc (or ~/.bashrc if using bash):"
-printf '\n  export ANTHROPIC_API_KEY="your-key-here"\n\n'
-log_info "Get your API key at: https://console.anthropic.com/settings/keys"
-log_ok "Claude Code configuration complete — set ANTHROPIC_API_KEY and reload your shell"
+# ---- settings.local.json: warn if missing ----
+if [ ! -f "$CLAUDE_DIR/settings.local.json" ]; then
+    log_warn "no $CLAUDE_DIR/settings.local.json found"
+    log_info "clone environment-secrets and run its install.sh:"
+    log_info "  git clone <gitea>/mhurt/environment-secrets ~/environment-secrets"
+    log_info "  ~/environment-secrets/install.sh"
+fi
+
+# ---- summary ----
+log_ok "Claude Code SOP configuration complete"
+log_info "Open a new shell (or 'source ~/.bashrc') to pick up cc-* wrappers"
+log_info "Run 'cc-doctor' to verify the install"
+[ -d "$BACKUP_DIR" ] && log_info "Pre-install state preserved at: $BACKUP_DIR"

@@ -40,6 +40,31 @@ _cc_mint_session_id() {
     fi
 }
 
+# ---- company tmux helpers ----
+_cc_company_tmux_session() {
+    # Single point of truth for the company tmux session name.
+    printf '%s' "company"
+}
+
+_cc_company_tmux_exists() {
+    local name
+    name=$(_cc_company_tmux_session)
+    tmux has-session -t "$name" 2>/dev/null
+}
+
+_cc_company_tmux_ensure() {
+    # Create the company tmux session if it does not exist. Idempotent.
+    local name
+    name=$(_cc_company_tmux_session)
+    if _cc_company_tmux_exists; then
+        return 0
+    fi
+    # New detached session, first window owned by the caller; we'll rename
+    # the first window from "cc" (the launcher attaches in cc()).
+    tmux new-session -d -s "$name" -n "cc"
+    _cc_log "company tmux session created: $name"
+}
+
 _cc_write_mode_file() {
     # $1 = directory, $2 = mode, $3 = slug, $4 = parent_repo,
     # $5 = session_id, $6 = parent_id (may be empty for top-level launches)
@@ -255,4 +280,5 @@ cc-doctor() {
 # (e.g. `bash -c 'cc-explore foo'`) don't fail with "_cc_repo_root: not found".
 export -f _cc_color_or_plain _cc_die _cc_log _cc_repo_root _cc_mint_session_id _cc_write_mode_file _cc_write_sandbox_settings \
           _cc_read_mode _cc_find_sandbox_settings \
+          _cc_company_tmux_session _cc_company_tmux_exists _cc_company_tmux_ensure \
           cc cc-explore cc-build cc-continue cc-doctor 2>/dev/null || true

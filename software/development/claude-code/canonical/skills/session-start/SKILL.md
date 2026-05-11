@@ -18,9 +18,10 @@ before substantive work begins:
 - [ ] Step 1: Detect launch context
 - [ ] Step 2: Verify mode against `.cc-mode`
 - [ ] Step 3: Write the session's tree slot
-- [ ] Step 4: Surface relevant vault context
-- [ ] Step 5: Solicit one-sentence session goal
-- [ ] Step 6: Remind user about /end and the CTX-WARN trigger
+- [ ] Step 4: Manager-decides on resume (read unread subtree events)
+- [ ] Step 5: Surface relevant vault context
+- [ ] Step 6: Solicit one-sentence session goal
+- [ ] Step 7: Remind user about /end and the CTX-WARN trigger
 
 ## Step 1: Detect launch context
 
@@ -75,7 +76,80 @@ missing or has no `session_id` — that covers older sessions predating
 Phase 1 and bare launches. Treat any non-zero exit as a real failure
 to surface to the user; otherwise echo the helper's output as-is.
 
-## Step 4: Surface relevant vault context
+## Step 4: Manager-decides on resume
+
+If this session has **children** (other slot files in
+`~/vault/20-surface/company/tree/sessions/` whose `parent_id` matches
+your own `session_id`), scan **your own** events directory for
+unread events and surface them.
+
+Run this exact Bash block:
+
+```bash
+mode_file=$(dir=$(pwd); while [ "$dir" != / ]; do [ -f "$dir/.cc-mode" ] && echo "$dir/.cc-mode" && break; dir=$(dirname "$dir"); done)
+[ -z "$mode_file" ] && exit 0
+
+my_session_id=$(grep '^session_id=' "$mode_file" | cut -d= -f2-)
+[ -z "$my_session_id" ] && exit 0
+
+events_dir=~/vault/20-surface/company/tree/sessions/${my_session_id}.events
+[ ! -d "$events_dir" ] && exit 0
+
+marker="$events_dir/.read-up-to"
+last_read=0
+[ -f "$marker" ] && last_read=$(cat "$marker")
+
+# List unread event files, sorted (filenames are zero-padded so lexical = chronological).
+unread=$(find "$events_dir" -maxdepth 1 -name '[0-9]*-*.md' -type f 2>/dev/null | sort | awk -v threshold="$last_read" -F'/' '{
+    fname=$NF
+    # Extract leading number from filename (e.g., "0007-completion.md" -> 7)
+    n=fname; sub(/-.*$/, "", n); gsub(/^0+/, "", n); if (n=="") n="0"
+    if (n+0 > threshold+0) print $0
+}')
+
+if [ -z "$unread" ]; then
+    echo "no unread events"
+else
+    echo "unread events:"
+    while IFS= read -r f; do
+        echo "  --- $f ---"
+        head -20 "$f"
+        echo
+    done <<< "$unread"
+
+    # Determine highest event_id present (read or unread); we'll bump marker
+    # only after the agent has actually processed them.
+    highest=$(find "$events_dir" -maxdepth 1 -name '[0-9]*-*.md' -type f 2>/dev/null \
+        | awk -F'/' '{fname=$NF; n=fname; sub(/-.*$/, "", n); gsub(/^0+/, "", n); if (n=="") n="0"; print n+0}' \
+        | sort -n | tail -1)
+    echo "(after deciding on each event, mark them read with:"
+    echo "  echo $highest > '$marker' )"
+fi
+```
+
+For each unread event, decide one of:
+
+- **Solve** — handle it inline (e.g., the CEO can deal with it now,
+  or you take the action yourself). Log a `decision` event in your
+  own events dir summarizing what you did.
+- **Ignore** — discard. Log a `decision` event with verb=`decision`
+  and severity=`info`, explaining why ignored.
+- **Escalate** — if you have a parent (look up `parent_id` in your
+  `.cc-mode`), write an event of the same severity to the parent's
+  events dir; otherwise, surface it to the CEO in the orientation
+  output for direct handling.
+
+After processing all unread events, update the `.read-up-to` marker
+with the bash one-liner the snippet above printed.
+
+If the session is the root (the EA) and there are unread events for
+you, this step is exactly where you compose your status orientation
+to the CEO.
+
+If the session has no children and no events, this step is a no-op
+and you can move on.
+
+## Step 5: Surface relevant vault context
 
 Skip if `~/vault/` does not exist (queue this step for after vault setup).
 
@@ -95,7 +169,7 @@ Relevant vault context:
 
 If no hits, say "no prior vault context for this repo" — that's useful info too.
 
-## Step 5: Solicit one-sentence session goal
+## Step 6: Solicit one-sentence session goal
 
 Ask the user:
 > "In one sentence, what is this session for?"
@@ -105,7 +179,7 @@ mentally for use in:
 - The eventual `end-conversation` summary (did we accomplish it?)
 - Naming a kept transcript (slug-ified)
 
-## Step 6: Remind user about /end
+## Step 7: Remind user about /end
 
 End with this exact one-liner:
 > "Ready. When you wrap up, run `/end` to walk the closing ritual.

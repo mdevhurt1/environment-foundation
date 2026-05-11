@@ -355,6 +355,42 @@ cc-branch() {
     _cc_log "branched: tmux window '$window_name' in session '$tmux_name'"
 }
 
+# ---- cc-teleport <task-id> ----
+cc-teleport() {
+    local target="${1:-}"
+
+    if [ -z "$target" ]; then
+        _cc_die "usage: cc-teleport <task-id>"
+        return 1
+    fi
+
+    if ! command -v tmux >/dev/null 2>&1; then
+        _cc_die "tmux required for cc-teleport"
+        return 1
+    fi
+
+    local tmux_name
+    tmux_name=$(_cc_company_tmux_session)
+
+    if ! _cc_company_tmux_exists; then
+        _cc_die "no company tmux session running; launch with: cc"
+        return 1
+    fi
+
+    # Confirm window exists.
+    if ! tmux list-windows -t "$tmux_name" -F '#{window_name}' 2>/dev/null | grep -Fxq "$target"; then
+        _cc_die "no window named '$target' in tmux session '$tmux_name'; list with: tmux list-windows -t $tmux_name"
+        return 1
+    fi
+
+    # If we're inside the same tmux session, select. Otherwise, attach with -t.
+    if [ -n "${TMUX:-}" ] && [ "$(tmux display -p '#S')" = "$tmux_name" ]; then
+        tmux select-window -t "${tmux_name}:${target}"
+    else
+        tmux attach-session -t "${tmux_name}:${target}"
+    fi
+}
+
 # ---- cc-doctor (delegates to script) ----
 cc-doctor() {
     bash ~/environment-foundation/software/development/claude-code/scripts/doctor.sh "$@"
@@ -366,4 +402,4 @@ cc-doctor() {
 export -f _cc_color_or_plain _cc_die _cc_log _cc_repo_root _cc_mint_session_id _cc_write_mode_file _cc_write_sandbox_settings \
           _cc_read_mode _cc_find_sandbox_settings \
           _cc_company_tmux_session _cc_company_tmux_exists _cc_company_tmux_ensure \
-          cc cc-branch cc-explore cc-build cc-continue cc-doctor 2>/dev/null || true
+          cc cc-branch cc-teleport cc-explore cc-build cc-continue cc-doctor 2>/dev/null || true

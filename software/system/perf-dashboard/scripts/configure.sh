@@ -16,12 +16,46 @@ require_not_root
 
 # Tier-specific functions added below by later tasks:
 # apply_vitals_dconf      — Task 3.3
-# detect_amd_card         — Task 2.5
-# place_conky_configs     — Task 2.5
-# register_conky_autostart — Task 2.5
+
+detect_amd_card() {
+  local c
+  for c in /sys/class/drm/card[0-9]; do
+    [[ -r "$c/device/vendor" ]] || continue
+    if [[ "$(cat "$c/device/vendor")" == "0x1002" ]]; then
+      basename "$c"
+      return 0
+    fi
+  done
+  log_warn "no AMD GPU detected — iGPU section will show 'n/a'"
+  printf "card_none"
+}
+
+place_conky_configs() {
+  log_info "Placing Conky configs in ~/.config/conky/..."
+  mkdir -p "$HOME/.config/conky"
+  local amd_card
+  amd_card=$(detect_amd_card)
+  log_info "Templating AMD card token: __AMD_CARD__ → $amd_card"
+  sed "s|__AMD_CARD__|$amd_card|g" \
+    "$CANONICAL/tier2-conky/perf-dashboard.conkyrc" \
+    > "$HOME/.config/conky/perf-dashboard.conkyrc"
+  cp "$CANONICAL/tier2-conky/widgets.lua" "$HOME/.config/conky/widgets.lua"
+}
+
+register_conky_autostart() {
+  if [[ "${XDG_SESSION_TYPE:-}" != "x11" ]]; then
+    log_warn "session is not X11 (got '${XDG_SESSION_TYPE:-unknown}') — skipping Conky autostart"
+    rm -f "$HOME/.config/autostart/perf-dashboard-conky.desktop"
+    return 0
+  fi
+  log_info "Registering Conky autostart..."
+  mkdir -p "$HOME/.config/autostart"
+  cp "$CANONICAL/tier2-conky/perf-dashboard-conky.desktop" \
+     "$HOME/.config/autostart/perf-dashboard-conky.desktop"
+}
 
 main() {
-  apply_vitals_dconf
+  # apply_vitals_dconf       # added in Task 3.3
   place_conky_configs
   register_conky_autostart
   log_ok  "Configure complete."

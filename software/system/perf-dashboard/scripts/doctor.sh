@@ -68,8 +68,9 @@ check_tier3() {
     pass "(no LAN IP detected — skipping off-loopback reachability check)"
   fi
 
+  # /api/v1/info no longer carries update_every; /api/v1/charts does.
   local update_every
-  update_every=$(curl -s "http://127.0.0.1:19999/api/v1/info" 2>/dev/null | jq -r '.update_every // "n/a"')
+  update_every=$(curl -s "http://127.0.0.1:19999/api/v1/charts" 2>/dev/null | jq -r '.update_every // "n/a"')
   if [[ "$update_every" == "60" ]]; then
     pass "Netdata update_every is 60s"
   else

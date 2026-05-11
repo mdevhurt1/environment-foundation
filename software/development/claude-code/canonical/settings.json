@@ -29,6 +29,19 @@
       "allowLocalBinding": true
     }
   },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo 'Bookend ritual: invoke the session-start skill (via the Skill tool) now to bootstrap this session — verify .cc-mode, write the tree slot, surface vault context, and capture the one-sentence goal.'"
+          }
+        ]
+      }
+    ]
+  },
   "statusLine": {
     "type": "command",
     "command": "$HOME/.claude/statusline-command.sh"

@@ -125,7 +125,65 @@ type the worktree name to confirm.
 
 For `mode=build`: skip this step.
 
-## Step 7: Final report
+## Step 7: Update the session's tree slot
+
+Update the slot file to reflect that the session has ended, and emit
+a completion event to the parent (if any).
+
+Run this exact Bash block:
+
+```bash
+mode_file=$(dir=$(pwd); while [ "$dir" != / ]; do [ -f "$dir/.cc-mode" ] && echo "$dir/.cc-mode" && break; dir=$(dirname "$dir"); done)
+[ -z "$mode_file" ] && { echo "no .cc-mode found — skipping slot update"; exit 0; }
+
+session_id=$(grep '^session_id=' "$mode_file" | cut -d= -f2-)
+parent_id=$(grep '^parent_id=' "$mode_file" | cut -d= -f2-)
+[ -z "$session_id" ] && { echo "WARN: no session_id; skipping slot update"; exit 0; }
+
+slot=~/vault/20-surface/company/tree/sessions/${session_id}.md
+if [ ! -f "$slot" ]; then
+    echo "WARN: no slot file at $slot — slot was never written; skipping update"
+    exit 0
+fi
+
+ended_at=$(date -Iseconds)
+
+# Update status and ended_at via sed; markdown body is unchanged.
+sed -i "s/^status: running$/status: completed/" "$slot"
+sed -i "s/^ended_at:$/ended_at: $ended_at/" "$slot"
+
+echo "tree slot updated: $slot"
+
+# Append a completion event to the parent's events dir, if it exists.
+if [ -n "$parent_id" ]; then
+    parent_events=~/vault/20-surface/company/tree/sessions/${parent_id}.events
+    if [ -d "$parent_events" ]; then
+        next=$(printf "%04d" $(( $(find "$parent_events" -name '*.md' 2>/dev/null | wc -l) + 1 )))
+        cat > "$parent_events/${next}-completion.md" <<EOF
+---
+event_id: $next
+session_id: $parent_id
+emitted_at: $ended_at
+verb: completion
+severity: normal
+---
+
+# Child session completed: $session_id
+
+The child session reported normal completion via /end.
+See its slot at \`~/vault/20-surface/company/tree/sessions/${session_id}.md\`.
+EOF
+        echo "completion event emitted to $parent_events/${next}-completion.md"
+    fi
+fi
+```
+
+If the session exits without `/end` (e.g., the terminal is closed),
+the slot will remain in `status: running` and no parent event will
+fire. This is acceptable for the founding state; future phases may
+add a wrapper-side stale-slot reaper.
+
+## Step 8: Final report
 
 One paragraph (max 4 sentences):
 - What was learned or accomplished
@@ -144,8 +202,8 @@ the vault to `~/.claude/queue/<subdir>/`. Document in the final report
 that artifacts are queued.
 
 **No new memory, no specs/plans, transcript declined**: still run Steps
-5-7. The promotion-candidates question and the final report still apply.
+5-8. The promotion-candidates question and the final report still apply.
 
 **User runs /end multiple times in one session**: subsequent runs are
 no-ops; surface a summary of what was already captured and skip Steps
-1-6. Always do Step 7.
+1-6. Always do Steps 7-8.

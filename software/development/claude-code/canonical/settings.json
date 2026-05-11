@@ -27,6 +27,11 @@
   "sandbox": {
     "network": {
       "allowLocalBinding": true
+    },
+    "filesystem": {
+      "allowWrite": [
+        "~/vault/20-surface/company/tree/sessions"
+      ]
     }
   },
   "hooks": {

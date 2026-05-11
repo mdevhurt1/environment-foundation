@@ -33,8 +33,23 @@ require_gnome() {
   fi
 }
 
-# Tier-specific functions are added below by later tasks.
-# install_vitals         — Task 3.2
+install_vitals() {
+  local uuid
+  uuid=$(cat "$CANONICAL/tier1-vitals/extension-uuid.txt")
+
+  if gnome-extensions list 2>/dev/null | grep -q "^$uuid$"; then
+    log_info "Vitals extension ($uuid) already installed"
+  else
+    log_info "Installing Vitals extension via D-Bus..."
+    log_warn ">>> A GNOME confirmation dialog will appear — click Install. <<<"
+    busctl --user call org.gnome.Shell.Extensions \
+      /org/gnome/Shell/Extensions \
+      org.gnome.Shell.Extensions \
+      InstallRemoteExtension s "$uuid" || \
+      fail "Vitals install via D-Bus failed. Install manually: https://extensions.gnome.org/extension/1460/vitals/"
+    log_ok "Vitals installed. It will activate after the next session login."
+  fi
+}
 
 install_apt_packages() {
   log_info "Installing apt dependencies (conky-all, power-profiles-daemon, lm-sensors, ext-manager)..."
@@ -118,8 +133,8 @@ main() {
   install_apt_packages
   run_sensors_detect
   # Tier 1 last (requires user action to log out / log in).
-  # install_vitals          # added in Task 3.2
-  log_ok "Install complete. Next: bash scripts/configure.sh, then log out and back in."
+  install_vitals
+  log_ok "Install complete. Next: bash scripts/configure.sh, then log out and back in to activate Vitals."
 }
 
 main "$@"

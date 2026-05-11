@@ -380,7 +380,7 @@ cc-branch() {
     # Branched sessions run with --dangerously-skip-permissions to match the
     # EA: orchestration is impractical when every tool call prompts. Identity
     # travels via the worktree's .cc-mode.
-    tmux new-window -t "$tmux_name" -n "$window_name" -c "$worktree" "claude --dangerously-skip-permissions"
+    tmux new-window -d -t "$tmux_name" -n "$window_name" -c "$worktree" "claude --dangerously-skip-permissions"
 
     _cc_log "branched: tmux window '$window_name' in session '$tmux_name'"
 }

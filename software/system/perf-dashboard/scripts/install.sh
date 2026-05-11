@@ -34,9 +34,26 @@ require_gnome() {
 }
 
 # Tier-specific functions are added below by later tasks.
-# install_apt_packages   — Task 2.4
-# run_sensors_detect     — Task 2.4
 # install_vitals         — Task 3.2
+
+install_apt_packages() {
+  log_info "Installing apt dependencies (conky-all, power-profiles-daemon, lm-sensors, ext-manager)..."
+  DEBIAN_FRONTEND=noninteractive sudo apt-get update -qq
+  DEBIAN_FRONTEND=noninteractive sudo apt-get install -y \
+    conky-all \
+    power-profiles-daemon \
+    lm-sensors \
+    gnome-shell-extension-manager \
+    curl jq
+  # Ensure the PPD daemon is enabled and running.
+  sudo systemctl enable --now power-profiles-daemon
+}
+
+run_sensors_detect() {
+  log_info "Running sensors-detect (idempotent)..."
+  yes | sudo sensors-detect --auto >/dev/null 2>&1 || \
+    log_warn "sensors-detect returned non-zero — temps may be partial. Re-run interactively if needed."
+}
 
 install_netdata() {
   if command -v netdata >/dev/null 2>&1 && systemctl is-enabled --quiet netdata; then
@@ -98,8 +115,8 @@ main() {
   install_netdata
   verify_netdata_bind
   # Tier 2 next (apt packages used by Tier 2's userspace bits).
-  # install_apt_packages    # added in Task 2.4
-  # run_sensors_detect      # added in Task 2.4
+  install_apt_packages
+  run_sensors_detect
   # Tier 1 last (requires user action to log out / log in).
   # install_vitals          # added in Task 3.2
   log_ok "Install complete. Next: bash scripts/configure.sh, then log out and back in."

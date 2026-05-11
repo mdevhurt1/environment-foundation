@@ -130,53 +130,20 @@ For `mode=build`: skip this step.
 Update the slot file to reflect that the session has ended, and emit
 a completion event to the parent (if any).
 
-Run this exact Bash block:
+Run **this exact single command** — do not split it into parts:
 
 ```bash
-mode_file=$(dir=$(pwd); while [ "$dir" != / ]; do [ -f "$dir/.cc-mode" ] && echo "$dir/.cc-mode" && break; dir=$(dirname "$dir"); done)
-[ -z "$mode_file" ] && { echo "no .cc-mode found — skipping slot update"; exit 0; }
-
-session_id=$(grep '^session_id=' "$mode_file" | cut -d= -f2-)
-parent_id=$(grep '^parent_id=' "$mode_file" | cut -d= -f2-)
-[ -z "$session_id" ] && { echo "WARN: no session_id; skipping slot update"; exit 0; }
-
-slot=~/vault/20-surface/company/tree/sessions/${session_id}.md
-if [ ! -f "$slot" ]; then
-    echo "WARN: no slot file at $slot — slot was never written; skipping update"
-    exit 0
-fi
-
-ended_at=$(date -Iseconds)
-
-# Update status and ended_at via sed; markdown body is unchanged.
-sed -i "s/^status: running$/status: completed/" "$slot"
-sed -i "s/^ended_at:$/ended_at: $ended_at/" "$slot"
-
-echo "tree slot updated: $slot"
-
-# Append a completion event to the parent's events dir, if it exists.
-if [ -n "$parent_id" ]; then
-    parent_events=~/vault/20-surface/company/tree/sessions/${parent_id}.events
-    if [ -d "$parent_events" ]; then
-        next=$(printf "%04d" $(( $(find "$parent_events" -name '*.md' 2>/dev/null | wc -l) + 1 )))
-        cat > "$parent_events/${next}-completion.md" <<EOF
----
-event_id: $next
-session_id: $parent_id
-emitted_at: $ended_at
-verb: completion
-severity: normal
----
-
-# Child session completed: $session_id
-
-The child session reported normal completion via /end.
-See its slot at \`~/vault/20-surface/company/tree/sessions/${session_id}.md\`.
-EOF
-        echo "completion event emitted to $parent_events/${next}-completion.md"
-    fi
-fi
+bash ~/.claude/cc-tree-slot-update.sh
 ```
+
+The helper sets `status: completed` and `ended_at: <now>` in the
+session's slot, and (if `.cc-mode` declares a parent whose events
+directory exists) appends a `completion` event there.
+
+The helper is a no-op (prints a WARN and exits 0) if `.cc-mode` is
+missing, has no `session_id`, or the slot file was never written.
+Treat any non-zero exit as a real failure to surface to the user;
+otherwise echo the helper's output as-is.
 
 If the session exits without `/end` (e.g., the terminal is closed),
 the slot will remain in `status: running` and no parent event will

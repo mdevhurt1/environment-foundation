@@ -68,6 +68,12 @@ log_ok "linked $CLAUDE_DIR/skills -> $CANONICAL/skills"
 # cc-functions in a stable location too
 link "$CANONICAL/shell/cc-functions.sh" "$CLAUDE_DIR/cc-functions.sh"
 
+# Tree-slot helpers invoked from session-start / end-conversation skills.
+# Kept as separate scripts (not skill-inline bash) so each runs in a single
+# Bash tool call with self-contained shell state.
+link "$CANONICAL/shell/cc-tree-slot-write.sh"  "$CLAUDE_DIR/cc-tree-slot-write.sh"
+link "$CANONICAL/shell/cc-tree-slot-update.sh" "$CLAUDE_DIR/cc-tree-slot-update.sh"
+
 # ---- ~/.bashrc source line (idempotent) ----
 SOURCE_LINE='[ -f ~/.claude/cc-functions.sh ] && source ~/.claude/cc-functions.sh'
 if ! grep -Fxq "$SOURCE_LINE" "$HOME/.bashrc" 2>/dev/null; then

@@ -225,6 +225,26 @@ cc-continue() {
     esac
 }
 
+# ---- cc (no args — command center launcher) ----
+cc() {
+    local cc_workspace="$HOME/vault/20-surface/company/_command-center"
+
+    if [ ! -d "$cc_workspace" ]; then
+        _cc_die "command center workspace not found at $cc_workspace; run Phase 1 setup"
+        return 1
+    fi
+
+    # Write a .cc-mode for the command center session if missing or stale.
+    # CC sessions are top-level (parent_id empty) and the slug is "cc".
+    local session_id
+    session_id=$(_cc_mint_session_id)
+    _cc_write_mode_file "$cc_workspace" command-center cc "$cc_workspace" "$session_id" ""
+
+    _cc_log "COMMAND CENTER: session_id=$session_id"
+    cd "$cc_workspace" || return 1
+    claude
+}
+
 # ---- cc-doctor (delegates to script) ----
 cc-doctor() {
     bash ~/environment-foundation/software/development/claude-code/scripts/doctor.sh "$@"
@@ -235,4 +255,4 @@ cc-doctor() {
 # (e.g. `bash -c 'cc-explore foo'`) don't fail with "_cc_repo_root: not found".
 export -f _cc_color_or_plain _cc_die _cc_log _cc_repo_root _cc_mint_session_id _cc_write_mode_file _cc_write_sandbox_settings \
           _cc_read_mode _cc_find_sandbox_settings \
-          cc-explore cc-build cc-continue cc-doctor 2>/dev/null || true
+          cc cc-explore cc-build cc-continue cc-doctor 2>/dev/null || true

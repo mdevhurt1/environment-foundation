@@ -377,9 +377,10 @@ cc-branch() {
     _cc_log "cc-branch: task=$task_id parent=$parent_session_id child=$child_session_id"
     _cc_log "          worktree=$worktree"
 
-    # For founding state we use plain `claude` with no sandbox; teleport
-    # reveals the live session. Identity travels via the worktree's .cc-mode.
-    tmux new-window -t "$tmux_name" -n "$window_name" -c "$worktree" "claude"
+    # Branched sessions run with --dangerously-skip-permissions to match the
+    # EA: orchestration is impractical when every tool call prompts. Identity
+    # travels via the worktree's .cc-mode.
+    tmux new-window -t "$tmux_name" -n "$window_name" -c "$worktree" "claude --dangerously-skip-permissions"
 
     _cc_log "branched: tmux window '$window_name' in session '$tmux_name'"
 }

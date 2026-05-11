@@ -2,7 +2,7 @@
 -- The token __AMD_CARD__ is substituted by configure.sh with the detected
 -- AMD iGPU card index (e.g., card1).
 conky.config = {
-    alignment = 'top_right',
+    alignment = 'middle_right',
     xinerama_head = 1,                  -- second monitor; 0 = primary
     background = false,
     border_width = 0,
@@ -17,7 +17,7 @@ conky.config = {
     use_xft = true,
     font = 'JetBrains Mono:size=10',
     gap_x = 12,
-    gap_y = 40,
+    gap_y = 0,
     minimum_height = 5,
     minimum_width = 320,
     net_avg_samples = 2,

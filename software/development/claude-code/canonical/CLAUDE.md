@@ -52,3 +52,38 @@ to these directories regardless of perceived value.
 - `CONTINUE` (cyan) — resumed
 - Context % shown at right; **at 80%, propose `/end`** before continuing
   substantive work to avoid losing the session to compaction.
+
+## Auto-memory location override
+
+The default `auto memory` system prompt instructs writes to
+`~/.claude/projects/<encoded-cwd>/memory/`. **Override: write to
+`~/vault/20-surface/claude-memory/` instead.**
+
+The protocol (memory types, file format, MEMORY.md index) is unchanged.
+Only the location moves. The index at `~/vault/20-surface/claude-memory/MEMORY.md`
+is authoritative; update it when adding or removing a memory.
+
+**Why:** memory entries are inherently cross-task (e.g., "user uses
+Gitea-only"; "plane API key lookup pattern"). They belong in the vault
+as a single canonical store, not in a per-session per-machine local
+directory. See spec D-2 in
+`docs/superpowers/specs/2026-05-10-agentic-workflow-design.md`.
+
+## Task identity
+
+Per-task content (specs, plans, transcripts) is stored under
+`~/vault/20-surface/company/tasks/<task_id>/`. The `task_id` is derived
+as follows:
+
+- If the task has a Plane issue, `task_id` is the Plane issue ID (e.g.,
+  `PROJ-123`).
+- Otherwise, `task_id` is the `.cc-mode` `slug` for this session
+  (e.g., `adhoc`).
+
+Slug-derived task IDs are intentionally reusable: two ad-hoc sessions
+sharing slug `adhoc` will accumulate under the same task folder. Use
+distinct slugs for distinct tasks.
+
+Cross-task memory entries remain flat at
+`~/vault/20-surface/claude-memory/` regardless of which task generated
+them (see Auto-memory location override above).

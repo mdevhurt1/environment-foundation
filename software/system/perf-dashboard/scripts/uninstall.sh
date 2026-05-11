@@ -31,6 +31,7 @@ uninstall_tier2() {
     rm -f "$HOME/.config/autostart/perf-dashboard-conky.desktop"
     rm -f "$HOME/.config/conky/perf-dashboard.conkyrc"
     rm -f "$HOME/.config/conky/widgets.lua"
+    rm -f "$HOME/.config/conky/conky-helpers.sh"
     rmdir "$HOME/.config/conky" 2>/dev/null || true
   fi
   if confirm "Remove apt packages (conky-all, power-profiles-daemon, lm-sensors)?"; then

@@ -40,6 +40,8 @@ place_conky_configs() {
     "$CANONICAL/tier2-conky/perf-dashboard.conkyrc" \
     > "$HOME/.config/conky/perf-dashboard.conkyrc"
   cp "$CANONICAL/tier2-conky/widgets.lua" "$HOME/.config/conky/widgets.lua"
+  install -m 0755 "$CANONICAL/tier2-conky/conky-helpers.sh" \
+    "$HOME/.config/conky/conky-helpers.sh"
 }
 
 register_conky_autostart() {

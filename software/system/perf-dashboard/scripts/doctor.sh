@@ -51,6 +51,11 @@ check_tier2() {
   else
     fail "~/.config/conky/widgets.lua missing — run scripts/configure.sh"
   fi
+  if [[ -x "$HOME/.config/conky/conky-helpers.sh" ]]; then
+    pass "conky-helpers.sh placed and executable in ~/.config/conky/"
+  else
+    fail "~/.config/conky/conky-helpers.sh missing or not executable — run scripts/configure.sh"
+  fi
 
   if [[ -f "$HOME/.config/conky/perf-dashboard.conkyrc" ]] && \
        grep -q '__AMD_CARD__' "$HOME/.config/conky/perf-dashboard.conkyrc"; then

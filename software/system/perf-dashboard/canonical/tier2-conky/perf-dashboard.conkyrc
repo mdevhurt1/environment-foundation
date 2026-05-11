@@ -37,7 +37,6 @@ conky.config = {
     update_interval = 2.0,
     uppercase = false,
     use_spacer = 'none',
-    show_swap = true,
     lua_load = '~/.config/conky/widgets.lua',
 };
 
@@ -56,19 +55,13 @@ Profile: ${execi 30 powerprofilesctl get 2>/dev/null || echo n/a}
 
 ${color cyan}CPU${color}
 ${hr}
-Total: ${cpu cpu0}%   Temp: ${hwmon 0 temp 1}°C
+Total: ${cpu cpu0}%   Temp: ${execi 30 $HOME/.config/conky/conky-helpers.sh cpu_temp}°C
 Freq:  ${freq_g 1} GHz
 ${cpubar cpu0}
 
 ${color cyan}NVIDIA dGPU${color}
 ${hr}
-${if_match "$(execi 5 nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>/dev/null)" != ""}\
-Usage: ${execi 5 nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits 2>/dev/null}%
-VRAM:  ${execi 5 nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null} MB
-Temp:  ${execi 5 nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader,nounits 2>/dev/null}°C\
-${else}\
-(asleep / unavailable)\
-${endif}
+${execi 5 $HOME/.config/conky/conky-helpers.sh nvidia}
 
 ${color cyan}AMD iGPU${color}
 ${hr}

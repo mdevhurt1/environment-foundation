@@ -1,0 +1,92 @@
+-- Managed by: software/system/perf-dashboard/canonical/tier2-conky/perf-dashboard.conkyrc
+-- The token __AMD_CARD__ is substituted by configure.sh with the detected
+-- AMD iGPU card index (e.g., card1).
+conky.config = {
+    alignment = 'middle_right',
+    xinerama_head = 1,                  -- second monitor; 0 = primary
+    background = false,
+    border_width = 0,
+    cpu_avg_samples = 2,
+    default_color = 'white',
+    default_outline_color = 'white',
+    default_shade_color = 'white',
+    draw_borders = false,
+    draw_graph_borders = true,
+    draw_outline = false,
+    draw_shades = false,
+    use_xft = true,
+    font = 'JetBrains Mono:size=10',
+    gap_x = 12,
+    gap_y = 0,
+    minimum_height = 5,
+    minimum_width = 320,
+    net_avg_samples = 2,
+    no_buffers = true,
+    out_to_console = false,
+    out_to_stderr = false,
+    extra_newline = false,
+    own_window = true,
+    own_window_argb_visual = true,
+    own_window_argb_value = 130,
+    own_window_class = 'Conky',
+    own_window_type = 'normal',
+    own_window_hints = 'undecorated,above,sticky,skip_taskbar,skip_pager',
+    own_window_transparent = false,
+    show_graph_range = false,
+    show_graph_scale = false,
+    stippled_borders = 0,
+    update_interval = 2.0,
+    uppercase = false,
+    use_spacer = 'none',
+    lua_load = '~/.config/conky/widgets.lua',
+};
+
+conky.text = [[
+${color cyan}SYSTEM${color}
+${hr}
+Host: ${nodename}
+Up:   ${uptime}
+Knl:  ${kernel}
+
+${color cyan}POWER${color}
+${hr}
+${if_existing /sys/class/power_supply/AC0/online 1}AC: connected${else}On battery${endif}
+Battery: ${battery_percent BAT0}% (${battery_time BAT0})
+Profile: ${execi 30 powerprofilesctl get 2>/dev/null || echo n/a}
+
+${color cyan}CPU${color}
+${hr}
+Total: ${cpu cpu0}%   Temp: ${execi 30 $HOME/.config/conky/conky-helpers.sh cpu_temp}°C
+Freq:  ${freq_g 1} GHz
+${cpubar cpu0}
+
+${color cyan}NVIDIA dGPU${color}
+${hr}
+${execi 5 $HOME/.config/conky/conky-helpers.sh nvidia}
+
+${color cyan}AMD iGPU${color}
+${hr}
+Usage: ${execi 2 cat /sys/class/drm/__AMD_CARD__/device/gpu_busy_percent 2>/dev/null || echo n/a}%
+
+${color cyan}MEMORY${color}
+${hr}
+RAM:  $mem / $memmax  ($memperc%)
+${membar}
+Swap: $swap / $swapmax  ($swapperc%)
+
+${color cyan}TOP CPU${color}
+${hr}
+${lua_parse cpu_color ${top cpu 1}}${top name 1}  ${top cpu 1}%${color}
+${lua_parse cpu_color ${top cpu 2}}${top name 2}  ${top cpu 2}%${color}
+${lua_parse cpu_color ${top cpu 3}}${top name 3}  ${top cpu 3}%${color}
+${lua_parse cpu_color ${top cpu 4}}${top name 4}  ${top cpu 4}%${color}
+${lua_parse cpu_color ${top cpu 5}}${top name 5}  ${top cpu 5}%${color}
+
+${color cyan}TOP MEM${color}
+${hr}
+${lua_parse mem_color ${top_mem mem_res 1}}${top_mem name 1}  ${top_mem mem_res 1}${color}
+${lua_parse mem_color ${top_mem mem_res 2}}${top_mem name 2}  ${top_mem mem_res 2}${color}
+${lua_parse mem_color ${top_mem mem_res 3}}${top_mem name 3}  ${top_mem mem_res 3}${color}
+${lua_parse mem_color ${top_mem mem_res 4}}${top_mem name 4}  ${top_mem mem_res 4}${color}
+${lua_parse mem_color ${top_mem mem_res 5}}${top_mem name 5}  ${top_mem mem_res 5}${color}
+]];

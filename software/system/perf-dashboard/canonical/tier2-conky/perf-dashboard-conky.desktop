@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=perf-dashboard Conky widget
+Comment=Always-on system performance widget on the second monitor
+Exec=sh -c 'sleep 5 && conky -c $HOME/.config/conky/perf-dashboard.conkyrc'
+Icon=utilities-system-monitor
+StartupNotify=false
+Terminal=false
+X-GNOME-Autostart-enabled=true
+OnlyShowIn=GNOME;

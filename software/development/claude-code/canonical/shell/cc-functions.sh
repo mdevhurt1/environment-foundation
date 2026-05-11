@@ -30,13 +30,26 @@ _cc_repo_root() {
     git rev-parse --show-toplevel 2>/dev/null
 }
 
+_cc_mint_session_id() {
+    # 22-char hex ID derived from uuidgen. Falls back to /dev/urandom on
+    # systems without uuidgen (rare on Ubuntu).
+    if command -v uuidgen >/dev/null 2>&1; then
+        uuidgen | tr -d '-' | head -c 22
+    else
+        head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n' | head -c 22
+    fi
+}
+
 _cc_write_mode_file() {
-    # $1 = directory to write into, $2 = mode, $3 = slug, $4 = parent_repo
+    # $1 = directory, $2 = mode, $3 = slug, $4 = parent_repo,
+    # $5 = session_id, $6 = parent_id (may be empty for top-level launches)
     cat > "$1/.cc-mode" <<EOF
 mode=$2
 slug=$3
 started_at=$(date -Iseconds)
 parent_repo=$4
+session_id=$5
+parent_id=${6:-}
 EOF
 }
 
@@ -106,7 +119,9 @@ cc-explore() {
         fi
     fi
 
-    _cc_write_mode_file "$worktree" exploration "$slug" "$repo_root"
+    local session_id
+    session_id=$(_cc_mint_session_id)
+    _cc_write_mode_file "$worktree" exploration "$slug" "$repo_root" "$session_id" "${CC_PARENT_ID:-}"
     _cc_write_sandbox_settings "$worktree"
 
     _cc_log "EXPLORE mode: sandboxed (--settings), branch=$branch, worktree=$worktree"
@@ -140,7 +155,9 @@ cc-build() {
         return 1
     fi
 
-    _cc_write_mode_file "$repo_root" build "${repo_name}" "$repo_root"
+    local session_id
+    session_id=$(_cc_mint_session_id)
+    _cc_write_mode_file "$repo_root" build "${repo_name}" "$repo_root" "$session_id" "${CC_PARENT_ID:-}"
     _cc_log "BUILD mode: full perms, no prompts"
     claude --dangerously-skip-permissions
 }
@@ -216,6 +233,6 @@ cc-doctor() {
 # ---- export to subshells ----
 # Public wrappers depend on internal _cc_* helpers; export both so subshells
 # (e.g. `bash -c 'cc-explore foo'`) don't fail with "_cc_repo_root: not found".
-export -f _cc_color_or_plain _cc_die _cc_log _cc_repo_root _cc_write_mode_file _cc_write_sandbox_settings \
+export -f _cc_color_or_plain _cc_die _cc_log _cc_repo_root _cc_mint_session_id _cc_write_mode_file _cc_write_sandbox_settings \
           _cc_read_mode _cc_find_sandbox_settings \
           cc-explore cc-build cc-continue cc-doctor 2>/dev/null || true

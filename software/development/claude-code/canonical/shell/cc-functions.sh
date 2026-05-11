@@ -288,6 +288,73 @@ cc() {
     tmux attach-session -t "$tmux_name"
 }
 
+# ---- cc-branch <task-id> [<repo-path>] ----
+cc-branch() {
+    local task_id="${1:-}"
+    local repo_path="${2:-}"
+
+    if [ -z "$task_id" ]; then
+        _cc_die "usage: cc-branch <task-id> [<repo-path>]"
+        return 1
+    fi
+
+    if ! [[ "$task_id" =~ ^[a-zA-Z0-9_./-]+$ ]]; then
+        _cc_die "task_id may only contain [a-zA-Z0-9_./-] (got: $task_id)"
+        return 1
+    fi
+
+    if ! command -v tmux >/dev/null 2>&1; then
+        _cc_die "tmux required for cc-branch"
+        return 1
+    fi
+
+    _cc_company_tmux_ensure
+
+    # Read the calling session's session_id from the nearest .cc-mode (the
+    # parent for this branch). If none, the branch is top-level and parent_id
+    # will be empty.
+    local mode_data parent_session_id=""
+    if mode_data=$(_cc_read_mode 2>/dev/null); then
+        parent_session_id=$(printf '%s\n' "$mode_data" | grep '^session_id=' | cut -d= -f2-)
+    fi
+
+    # Decide working directory: explicit arg > current repo root > $HOME
+    local workdir
+    if [ -n "$repo_path" ]; then
+        workdir="$repo_path"
+    elif workdir=$(_cc_repo_root); then
+        : # use repo root
+    else
+        workdir="$HOME"
+    fi
+
+    if [ ! -d "$workdir" ]; then
+        _cc_die "workdir does not exist: $workdir"
+        return 1
+    fi
+
+    local tmux_name window_name
+    tmux_name=$(_cc_company_tmux_session)
+    window_name="$task_id"
+
+    # If a window with this name already exists, warn and refuse.
+    if tmux list-windows -t "$tmux_name" -F '#{window_name}' 2>/dev/null | grep -Fxq "$window_name"; then
+        _cc_die "a window named '$window_name' already exists in tmux session '$tmux_name'; pick a different task_id or teleport into the existing window"
+        return 1
+    fi
+
+    _cc_log "cc-branch: task=$task_id parent=$parent_session_id workdir=$workdir"
+
+    # New window with CC_PARENT_ID exported into the child shell. The child
+    # launches claude via cc-explore-style invocation appropriate to the
+    # working directory. For founding state we use plain `claude` with no
+    # sandbox; teleport reveals the live session.
+    tmux new-window -t "$tmux_name" -n "$window_name" -c "$workdir" \
+        "CC_PARENT_ID='$parent_session_id' claude"
+
+    _cc_log "branched: tmux window '$window_name' in session '$tmux_name'"
+}
+
 # ---- cc-doctor (delegates to script) ----
 cc-doctor() {
     bash ~/environment-foundation/software/development/claude-code/scripts/doctor.sh "$@"
@@ -299,4 +366,4 @@ cc-doctor() {
 export -f _cc_color_or_plain _cc_die _cc_log _cc_repo_root _cc_mint_session_id _cc_write_mode_file _cc_write_sandbox_settings \
           _cc_read_mode _cc_find_sandbox_settings \
           _cc_company_tmux_session _cc_company_tmux_exists _cc_company_tmux_ensure \
-          cc cc-explore cc-build cc-continue cc-doctor 2>/dev/null || true
+          cc cc-branch cc-explore cc-build cc-continue cc-doctor 2>/dev/null || true

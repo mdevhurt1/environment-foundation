@@ -284,7 +284,9 @@ cc() {
     _cc_log "COMMAND CENTER: session_id=$session_id"
 
     # Create tmux session with first window in the CC workspace running claude.
-    tmux new-session -d -s "$tmux_name" -n "cc" -c "$cc_workspace" "claude"
+    # The EA orchestrates from a trusted workspace and would prompt-thrash
+    # without --dangerously-skip-permissions.
+    tmux new-session -d -s "$tmux_name" -n "cc" -c "$cc_workspace" "claude --dangerously-skip-permissions"
     tmux attach-session -t "$tmux_name"
 }
 

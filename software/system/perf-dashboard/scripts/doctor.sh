@@ -24,7 +24,67 @@ section() { printf '\n=== %s ===\n' "$*"; }
 
 # Tier-specific check functions added below by later tasks:
 # check_tier1   — Task 3.4
-# check_tier2   — Task 2.6
+
+check_tier2() {
+  section "Tier 2 — Conky"
+
+  if command -v conky >/dev/null 2>&1; then
+    pass "conky binary present"
+  else
+    fail "conky not installed"
+    return 0
+  fi
+
+  if command -v powerprofilesctl >/dev/null 2>&1; then
+    pass "powerprofilesctl present (Power section will populate)"
+  else
+    fail "power-profiles-daemon not installed"
+  fi
+
+  if [[ -f "$HOME/.config/conky/perf-dashboard.conkyrc" ]]; then
+    pass "conkyrc placed in ~/.config/conky/"
+  else
+    fail "~/.config/conky/perf-dashboard.conkyrc missing — run scripts/configure.sh"
+  fi
+  if [[ -f "$HOME/.config/conky/widgets.lua" ]]; then
+    pass "widgets.lua placed in ~/.config/conky/"
+  else
+    fail "~/.config/conky/widgets.lua missing — run scripts/configure.sh"
+  fi
+
+  if [[ -f "$HOME/.config/conky/perf-dashboard.conkyrc" ]] && \
+       grep -q '__AMD_CARD__' "$HOME/.config/conky/perf-dashboard.conkyrc"; then
+    fail "conkyrc still contains the __AMD_CARD__ placeholder — re-run configure.sh"
+  elif [[ -f "$HOME/.config/conky/perf-dashboard.conkyrc" ]]; then
+    pass "AMD card token has been substituted in deployed conkyrc"
+  fi
+
+  if [[ "${XDG_SESSION_TYPE:-}" == "x11" ]]; then
+    if [[ -f "$HOME/.config/autostart/perf-dashboard-conky.desktop" ]]; then
+      pass "Conky autostart entry registered"
+    else
+      fail "Conky autostart entry missing — run scripts/configure.sh"
+    fi
+  else
+    pass "Skipping autostart check (session is not X11)"
+  fi
+
+  if [[ "${XDG_SESSION_TYPE:-}" == "x11" ]]; then
+    if pgrep -x conky >/dev/null; then
+      pass "Conky is running"
+      local pid rss
+      pid=$(pgrep -x conky | head -1)
+      rss=$(ps -o rss= -p "$pid" | tr -d ' ')
+      if [[ "$rss" -lt 15000 ]]; then
+        pass "Conky RSS within budget (${rss}KB < 15000KB)"
+      else
+        fail "Conky RSS over budget: ${rss}KB"
+      fi
+    else
+      fail "Conky not running — start manually: conky -c ~/.config/conky/perf-dashboard.conkyrc &"
+    fi
+  fi
+}
 
 check_tier3() {
   section "Tier 3 — Netdata"

@@ -24,7 +24,22 @@ confirm() {
 # Tier-specific uninstall functions added below by later tasks:
 # uninstall_tier1   — Task 3.5
 # uninstall_tier2   — Task 2.7
-# uninstall_tier3   — Task 1.4
+
+uninstall_tier3() {
+  log_info "Tier 3: Netdata"
+  if confirm "Stop and uninstall Netdata? (data in /var/cache/netdata will be lost)"; then
+    if [[ -x /usr/libexec/netdata/netdata-uninstaller.sh ]]; then
+      sudo /usr/libexec/netdata/netdata-uninstaller.sh --yes --force
+    elif [[ -x /usr/sbin/netdata-uninstaller.sh ]]; then
+      sudo /usr/sbin/netdata-uninstaller.sh --yes --force
+    elif command -v dpkg >/dev/null 2>&1 && dpkg -l netdata >/dev/null 2>&1; then
+      sudo apt remove --purge -y netdata
+    else
+      log_warn "Netdata uninstaller not found — remove manually if needed."
+    fi
+    sudo rm -rf /etc/netdata /var/cache/netdata /var/lib/netdata
+  fi
+}
 
 main() {
   # Reverse order: Tier 3 (heaviest) first, Tier 1 last.

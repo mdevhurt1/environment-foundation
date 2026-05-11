@@ -22,8 +22,44 @@ pass()    { log_ok    "$*"; PASS_COUNT=$((PASS_COUNT+1)); }
 fail()    { log_error "$*"; FAIL_COUNT=$((FAIL_COUNT+1)); }
 section() { printf '\n=== %s ===\n' "$*"; }
 
-# Tier-specific check functions added below by later tasks:
-# check_tier1   — Task 3.4
+check_tier1() {
+  section "Tier 1 — Vitals"
+
+  if ! command -v gnome-extensions >/dev/null 2>&1; then
+    fail "gnome-extensions CLI missing — install gnome-shell"
+    return 0
+  fi
+
+  local uuid="Vitals@CoreCoding.com"
+
+  if gnome-extensions list 2>/dev/null | grep -q "^$uuid$"; then
+    pass "Vitals extension is installed"
+  else
+    fail "Vitals extension not installed — run scripts/install.sh"
+    return 0
+  fi
+
+  if gnome-extensions list --enabled 2>/dev/null | grep -q "^$uuid$"; then
+    pass "Vitals extension is enabled"
+  else
+    fail "Vitals extension installed but not enabled — log out/in, or: gnome-extensions enable $uuid"
+  fi
+
+  local canonical="$CANONICAL/tier1-vitals/dconf-vitals.ini"
+  if [[ -f "$canonical" ]]; then
+    local diff_out
+    diff_out=$(diff <(dconf dump /org/gnome/shell/extensions/vitals/ | sort) \
+                    <(sort "$canonical") || true)
+    if [[ -z "$diff_out" ]]; then
+      pass "Vitals dconf matches canonical"
+    else
+      fail "Vitals dconf drifts from canonical — run scripts/configure.sh. Diff:"
+      printf "%s\n" "$diff_out" | sed 's/^/        /'
+    fi
+  else
+    fail "Canonical Vitals dconf missing at $canonical"
+  fi
+}
 
 check_tier2() {
   section "Tier 2 — Conky"

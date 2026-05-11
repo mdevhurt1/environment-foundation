@@ -25,7 +25,52 @@ section() { printf '\n=== %s ===\n' "$*"; }
 # Tier-specific check functions added below by later tasks:
 # check_tier1   — Task 3.4
 # check_tier2   — Task 2.6
-# check_tier3   — Task 1.2
+
+check_tier3() {
+  section "Tier 3 — Netdata"
+
+  if curl -sf "http://127.0.0.1:19999/api/v1/info" >/dev/null 2>&1; then
+    pass "Netdata reachable on http://127.0.0.1:19999/"
+  else
+    fail "Netdata not reachable on loopback"
+    return 0   # remaining checks depend on it being up; skip them
+  fi
+
+  local listening
+  listening=$(ss -tlnp 2>/dev/null | grep ':19999' || true)
+  if echo "$listening" | grep -q '127.0.0.1:19999' && \
+     ! echo "$listening" | grep -qE '0\.0\.0\.0|\[::\]'; then
+    pass "Netdata bound to 127.0.0.1 only"
+  else
+    fail "SECURITY: Netdata bind suspicious (expected 127.0.0.1:19999 only): $listening"
+  fi
+
+  local lan_ip
+  lan_ip=$(ip -4 addr show 2>/dev/null | awk '/inet / && !/127\.0\.0\.1/ {print $2}' | cut -d/ -f1 | head -1)
+  if [[ -n "$lan_ip" ]]; then
+    if curl -sf --connect-timeout 2 "http://${lan_ip}:19999/api/v1/info" >/dev/null 2>&1; then
+      fail "SECURITY: Netdata reachable on LAN IP $lan_ip — should NOT be"
+    else
+      pass "Netdata correctly NOT reachable on LAN IP $lan_ip"
+    fi
+  else
+    pass "(no LAN IP detected — skipping off-loopback reachability check)"
+  fi
+
+  local update_every
+  update_every=$(curl -s "http://127.0.0.1:19999/api/v1/info" 2>/dev/null | jq -r '.update_every // "n/a"')
+  if [[ "$update_every" == "60" ]]; then
+    pass "Netdata update_every is 60s"
+  else
+    fail "Netdata update_every is '$update_every' (expected 60)"
+  fi
+
+  if [[ -d /var/cache/netdata/dbengine ]]; then
+    pass "dbengine directory exists at /var/cache/netdata/dbengine"
+  else
+    fail "dbengine directory not found"
+  fi
+}
 
 main() {
   check_tier3   # security-critical first

@@ -23,7 +23,20 @@ confirm() {
 
 # Tier-specific uninstall functions added below by later tasks:
 # uninstall_tier1   — Task 3.5
-# uninstall_tier2   — Task 2.7
+
+uninstall_tier2() {
+  log_info "Tier 2: Conky"
+  if confirm "Stop Conky and remove user-side configs + autostart?"; then
+    pkill -x conky 2>/dev/null || true
+    rm -f "$HOME/.config/autostart/perf-dashboard-conky.desktop"
+    rm -f "$HOME/.config/conky/perf-dashboard.conkyrc"
+    rm -f "$HOME/.config/conky/widgets.lua"
+    rmdir "$HOME/.config/conky" 2>/dev/null || true
+  fi
+  if confirm "Remove apt packages (conky-all, power-profiles-daemon, lm-sensors)?"; then
+    DEBIAN_FRONTEND=noninteractive sudo apt-get remove -y conky-all power-profiles-daemon lm-sensors
+  fi
+}
 
 uninstall_tier3() {
   log_info "Tier 3: Netdata"

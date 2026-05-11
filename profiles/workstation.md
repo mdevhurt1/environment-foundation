@@ -29,6 +29,11 @@ Run all baseline steps in order:
 - [ ] [Docker — configure](../software/development/docker/scripts/configure.sh) `[dev]`
 - [ ] [Plane — configure](../software/development/claude-code/integrations/plane/README.md) `[workstation]`
 
-### 3. Gaming *(skip on workplace or headless machines)*
+### 3. System
+
+- [ ] [Performance Dashboard — install](../software/system/perf-dashboard/scripts/install.sh) `[workstation]` — three-tier glanceable system monitor (Vitals + Conky + Netdata)
+- [ ] [Performance Dashboard — configure](../software/system/perf-dashboard/scripts/configure.sh) `[workstation]`
+
+### 4. Gaming *(skip on workplace or headless machines)*
 
 - [ ] [Steam — install](../software/gaming/steam/scripts/install.sh) `[gaming]`

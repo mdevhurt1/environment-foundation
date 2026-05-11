@@ -49,6 +49,8 @@ Then validate consistency:
 |---|---|
 | `mode=exploration` | cwd should be a worktree (`git worktree list` shows it) |
 | `mode=build` | cwd is the main worktree; a plan exists in `~/.claude/plans/` or in `<repo>/docs/superpowers/plans/` |
+| `mode=branched` | cwd is a per-task worktree (`<repo>-branch-<task>`); `parent_id` is set |
+| `mode=command-center` | cwd is `~/vault/20-surface/company/_command-center/`; this is the EA / root |
 | missing | session was launched bare; treat as exploration but warn user |
 
 If a mode is declared but the sanity check fails (e.g. `mode=build` but

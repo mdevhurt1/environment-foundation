@@ -291,7 +291,7 @@ cc() {
 # ---- cc-branch <task-id> [<repo-path>] ----
 cc-branch() {
     local task_id="${1:-}"
-    local repo_path="${2:-}"
+    local repo_arg="${2:-}"
 
     if [ -z "$task_id" ]; then
         _cc_die "usage: cc-branch <task-id> [<repo-path>]"
@@ -308,30 +308,59 @@ cc-branch() {
         return 1
     fi
 
-    _cc_company_tmux_ensure
+    # Resolve repo. Prefer explicit arg; fall back to caller's repo root.
+    # cc-branch always operates against a real git repo so it can create a
+    # per-task worktree (the child's isolated identity lives in its .cc-mode).
+    local repo_root
+    if [ -n "$repo_arg" ]; then
+        if [ ! -d "$repo_arg" ]; then
+            _cc_die "repo-path does not exist: $repo_arg"
+            return 1
+        fi
+        repo_root=$(git -C "$repo_arg" rev-parse --show-toplevel 2>/dev/null) || {
+            _cc_die "repo-path is not a git repo: $repo_arg"
+            return 1
+        }
+    else
+        repo_root=$(_cc_repo_root) || {
+            _cc_die "not in a git repo; pass <repo-path> explicitly"
+            return 1
+        }
+    fi
 
-    # Read the calling session's session_id from the nearest .cc-mode (the
-    # parent for this branch). If none, the branch is top-level and parent_id
-    # will be empty.
+    # Parent identity comes from the caller's nearest .cc-mode (the calling
+    # session's). For the EA this returns its own session_id.
     local mode_data parent_session_id=""
     if mode_data=$(_cc_read_mode 2>/dev/null); then
         parent_session_id=$(printf '%s\n' "$mode_data" | grep '^session_id=' | cut -d= -f2-)
     fi
 
-    # Decide working directory: explicit arg > current repo root > $HOME
-    local workdir
-    if [ -n "$repo_path" ]; then
-        workdir="$repo_path"
-    elif workdir=$(_cc_repo_root); then
-        : # use repo root
+    # Worktree per child. Mirrors cc-explore's pattern so .cc-mode never
+    # clobbers the parent's in a shared repo. task_id is sanitized for
+    # filesystem use (slashes → dashes); the git branch keeps the slashes.
+    local repo_name task_id_safe worktree branch
+    repo_name=$(basename "$repo_root")
+    task_id_safe="${task_id//\//-}"
+    worktree="${repo_root%/*}/${repo_name}-branch-${task_id_safe}"
+    branch="branch/${task_id}"
+
+    if [ -d "$worktree" ]; then
+        _cc_log "worktree already exists at $worktree — reusing"
     else
-        workdir="$HOME"
+        if git -C "$repo_root" show-ref --verify --quiet "refs/heads/${branch}"; then
+            git -C "$repo_root" worktree add "$worktree" "$branch" || return 1
+        else
+            git -C "$repo_root" worktree add "$worktree" -b "$branch" || return 1
+        fi
     fi
 
-    if [ ! -d "$workdir" ]; then
-        _cc_die "workdir does not exist: $workdir"
-        return 1
-    fi
+    # Child identity: fresh session_id + parent_id from caller. Written to the
+    # worktree so the child's session-start reads it via cc-tree-slot-write.sh.
+    local child_session_id
+    child_session_id=$(_cc_mint_session_id)
+    _cc_write_mode_file "$worktree" branched "$task_id" "$repo_root" "$child_session_id" "$parent_session_id"
+
+    _cc_company_tmux_ensure
 
     local tmux_name window_name
     tmux_name=$(_cc_company_tmux_session)
@@ -343,14 +372,12 @@ cc-branch() {
         return 1
     fi
 
-    _cc_log "cc-branch: task=$task_id parent=$parent_session_id workdir=$workdir"
+    _cc_log "cc-branch: task=$task_id parent=$parent_session_id child=$child_session_id"
+    _cc_log "          worktree=$worktree"
 
-    # New window with CC_PARENT_ID exported into the child shell. The child
-    # launches claude via cc-explore-style invocation appropriate to the
-    # working directory. For founding state we use plain `claude` with no
-    # sandbox; teleport reveals the live session.
-    tmux new-window -t "$tmux_name" -n "$window_name" -c "$workdir" \
-        "CC_PARENT_ID='$parent_session_id' claude"
+    # For founding state we use plain `claude` with no sandbox; teleport
+    # reveals the live session. Identity travels via the worktree's .cc-mode.
+    tmux new-window -t "$tmux_name" -n "$window_name" -c "$worktree" "claude"
 
     _cc_log "branched: tmux window '$window_name' in session '$tmux_name'"
 }

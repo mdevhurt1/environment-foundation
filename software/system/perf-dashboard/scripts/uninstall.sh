@@ -21,8 +21,18 @@ confirm() {
   [[ "$ans" =~ ^[Yy]$ ]]
 }
 
-# Tier-specific uninstall functions added below by later tasks:
-# uninstall_tier1   — Task 3.5
+uninstall_tier1() {
+  log_info "Tier 1: Vitals"
+  local uuid="Vitals@CoreCoding.com"
+  if confirm "Disable + uninstall Vitals extension and reset its dconf?"; then
+    gnome-extensions disable "$uuid" 2>/dev/null || true
+    gnome-extensions uninstall "$uuid" 2>/dev/null || true
+    dconf reset -f /org/gnome/shell/extensions/vitals/ 2>/dev/null || true
+  fi
+  if confirm "Remove gnome-shell-extension-manager apt package?"; then
+    DEBIAN_FRONTEND=noninteractive sudo apt-get remove -y gnome-shell-extension-manager
+  fi
+}
 
 uninstall_tier2() {
   log_info "Tier 2: Conky"

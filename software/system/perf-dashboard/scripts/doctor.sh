@@ -36,13 +36,24 @@ check_tier3() {
     return 0   # remaining checks depend on it being up; skip them
   fi
 
-  local listening
-  listening=$(ss -tlnp 2>/dev/null | grep ':19999' || true)
-  if echo "$listening" | grep -q '127.0.0.1:19999' && \
-     ! echo "$listening" | grep -qE '0\.0\.0\.0|\[::\]'; then
-    pass "Netdata bound to 127.0.0.1 only"
+  # Parse the Local Address column only. Peer Address for any TCP LISTEN is
+  # always 0.0.0.0:* / [::]:* regardless of bind, so we cannot grep the line.
+  local local_addrs bad=""
+  local_addrs=$(ss -tlnH "( sport = :19999 )" 2>/dev/null | awk '{print $4}')
+  if [[ -z "$local_addrs" ]]; then
+    fail "Nothing listening on port 19999"
   else
-    fail "SECURITY: Netdata bind suspicious (expected 127.0.0.1:19999 only): $listening"
+    while IFS= read -r addr; do
+      case "$addr" in
+        127.0.0.1:19999|"[::1]:19999") ;;
+        *) bad="$bad $addr" ;;
+      esac
+    done <<< "$local_addrs"
+    if [[ -z "$bad" ]]; then
+      pass "Netdata bound to loopback only ($(echo "$local_addrs" | paste -sd, -))"
+    else
+      fail "SECURITY: Netdata bound to non-loopback:$bad"
+    fi
   fi
 
   local lan_ip

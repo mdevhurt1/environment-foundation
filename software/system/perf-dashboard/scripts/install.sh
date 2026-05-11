@@ -74,17 +74,21 @@ verify_netdata_bind() {
   done
 
   log_info "Verifying Netdata bind..."
-  local listening
-  listening=$(ss -tlnp 2>/dev/null | grep ':19999' || true)
-  if [[ -z "$listening" ]]; then
+  # Parse the Local Address column only. For LISTEN sockets the Peer Address
+  # is always 0.0.0.0:* (v4) or [::]:* (v6) regardless of bind interface, so
+  # we must not grep the whole line.
+  local local_addrs
+  local_addrs=$(ss -tlnH "( sport = :19999 )" 2>/dev/null | awk '{print $4}')
+  if [[ -z "$local_addrs" ]]; then
     fail "Nothing listening on port 19999 — Netdata may have failed to start. Check: journalctl -u netdata"
   fi
-  echo "$listening" | grep -q '127.0.0.1:19999' || \
-    fail "Netdata not bound to 127.0.0.1:19999. Found: $listening"
-  if echo "$listening" | grep -qE '0\.0\.0\.0|\[::\]'; then
-    fail "SECURITY: Netdata bound to wildcard interface — refusing install. Found: $listening"
-  fi
-  log_ok "Netdata bound to 127.0.0.1:19999 only"
+  while IFS= read -r addr; do
+    case "$addr" in
+      127.0.0.1:19999|"[::1]:19999") ;;
+      *) fail "SECURITY: Netdata bound to non-loopback address — refusing. Found: $addr" ;;
+    esac
+  done <<< "$local_addrs"
+  log_ok "Netdata bound to loopback only ($(echo "$local_addrs" | paste -sd, -))"
 }
 
 main() {
@@ -94,10 +98,10 @@ main() {
   install_netdata
   verify_netdata_bind
   # Tier 2 next (apt packages used by Tier 2's userspace bits).
-  install_apt_packages
-  run_sensors_detect
+  # install_apt_packages    # added in Task 2.4
+  # run_sensors_detect      # added in Task 2.4
   # Tier 1 last (requires user action to log out / log in).
-  install_vitals
+  # install_vitals          # added in Task 3.2
   log_ok "Install complete. Next: bash scripts/configure.sh, then log out and back in."
 }
 

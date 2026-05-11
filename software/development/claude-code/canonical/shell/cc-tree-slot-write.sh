@@ -44,6 +44,29 @@ mode=$(grep '^mode=' "$mode_file" | cut -d= -f2-)
 started_at=$(grep '^started_at=' "$mode_file" | cut -d= -f2-)
 parent_repo=$(grep '^parent_repo=' "$mode_file" | cut -d= -f2-)
 
+# Validate identifiers before interpolating into paths/heredocs. session_id
+# and parent_id must match the 22-hex format minted by _cc_mint_session_id;
+# parent_id may also legitimately be empty (root sessions). slug and mode
+# flow into the heredoc body — strip newlines and restrict to safe chars.
+if ! [[ "$session_id" =~ ^[0-9a-f]{22}$ ]]; then
+    echo "WARN: malformed session_id in $mode_file (refusing to write tree slot)" >&2
+    exit 0
+fi
+if [ -n "$parent_id" ] && ! [[ "$parent_id" =~ ^[0-9a-f]{22}$ ]]; then
+    echo "WARN: malformed parent_id in $mode_file (refusing to write tree slot)" >&2
+    exit 0
+fi
+slug=${slug//$'\n'/}
+mode=${mode//$'\n'/}
+if ! [[ "$slug" =~ ^[a-zA-Z0-9_./-]*$ ]]; then
+    echo "WARN: malformed slug in $mode_file (refusing to write tree slot)" >&2
+    exit 0
+fi
+if ! [[ "$mode" =~ ^[a-zA-Z0-9_./-]*$ ]]; then
+    echo "WARN: malformed mode in $mode_file (refusing to write tree slot)" >&2
+    exit 0
+fi
+
 # task_id: defaults to slug; Plane-backed tasks can be edited in the slot later.
 task_id="$slug"
 

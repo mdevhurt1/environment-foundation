@@ -34,6 +34,18 @@ if [ -z "$session_id" ]; then
     exit 0
 fi
 
+# Validate identifiers before interpolating into paths/heredocs. session_id
+# and parent_id must match the 22-hex format minted by _cc_mint_session_id;
+# parent_id may also legitimately be empty (root sessions).
+if ! [[ "$session_id" =~ ^[0-9a-f]{22}$ ]]; then
+    echo "WARN: malformed session_id in $mode_file (refusing to write tree slot)" >&2
+    exit 0
+fi
+if [ -n "$parent_id" ] && ! [[ "$parent_id" =~ ^[0-9a-f]{22}$ ]]; then
+    echo "WARN: malformed parent_id in $mode_file (refusing to write tree slot)" >&2
+    exit 0
+fi
+
 slot="$HOME/vault/20-surface/company/tree/sessions/${session_id}.md"
 if [ ! -f "$slot" ]; then
     echo "WARN: no slot file at $slot — slot was never written; skipping update"

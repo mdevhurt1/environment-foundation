@@ -68,13 +68,18 @@ _cc_company_tmux_ensure() {
 _cc_write_mode_file() {
     # $1 = directory, $2 = mode, $3 = slug, $4 = parent_repo,
     # $5 = session_id, $6 = parent_id (may be empty for top-level launches)
+    # Scrub newlines and '=' from session_id/parent_id at the write boundary
+    # so a malformed CC_PARENT_ID cannot inject extra .cc-mode keys.
+    local _sid _pid
+    _sid=$(printf '%s' "$5" | tr -d '\n=')
+    _pid=$(printf '%s' "${6:-}" | tr -d '\n=')
     cat > "$1/.cc-mode" <<EOF
 mode=$2
 slug=$3
 started_at=$(date -Iseconds)
 parent_repo=$4
-session_id=$5
-parent_id=${6:-}
+session_id=$_sid
+parent_id=$_pid
 EOF
 }
 
@@ -251,6 +256,8 @@ cc-continue() {
 }
 
 # ---- cc (no args — command center launcher) ----
+# NOTE: --dangerously-skip-permissions is intentional here; see spec §4.3
+# for the "known gap" acceptance. Closes when Phase 5 sandbox profiles land.
 cc() {
     local cc_workspace="$HOME/vault/20-surface/company/_command-center"
 
@@ -291,6 +298,8 @@ cc() {
 }
 
 # ---- cc-branch <task-id> [<repo-path>] ----
+# NOTE: --dangerously-skip-permissions is intentional here; see spec §4.3
+# for the "known gap" acceptance. Closes when Phase 5 sandbox profiles land.
 cc-branch() {
     local task_id="${1:-}"
     local repo_arg="${2:-}"

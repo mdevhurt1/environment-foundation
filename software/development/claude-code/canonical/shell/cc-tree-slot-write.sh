@@ -30,13 +30,15 @@ if [ -z "$mode_file" ]; then
     exit 0
 fi
 
-session_id=$(grep '^session_id=' "$mode_file" | cut -d= -f2-)
+# grep || true: a legacy .cc-mode predating Phase 1 won't have session_id /
+# parent_id; pipefail would otherwise abort before the empty-check below.
+session_id=$( { grep '^session_id=' "$mode_file" || true; } | cut -d= -f2-)
 if [ -z "$session_id" ]; then
     echo "WARN: .cc-mode has no session_id; skipping tree slot"
     exit 0
 fi
 
-parent_id=$(grep '^parent_id=' "$mode_file" | cut -d= -f2-)
+parent_id=$( { grep '^parent_id=' "$mode_file" || true; } | cut -d= -f2-)
 slug=$(grep '^slug=' "$mode_file" | cut -d= -f2-)
 mode=$(grep '^mode=' "$mode_file" | cut -d= -f2-)
 started_at=$(grep '^started_at=' "$mode_file" | cut -d= -f2-)

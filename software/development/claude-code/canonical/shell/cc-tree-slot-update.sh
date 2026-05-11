@@ -25,8 +25,10 @@ if [ -z "$mode_file" ]; then
     exit 0
 fi
 
-session_id=$(grep '^session_id=' "$mode_file" | cut -d= -f2-)
-parent_id=$(grep '^parent_id=' "$mode_file" | cut -d= -f2-)
+# grep || true: a legacy .cc-mode predating Phase 1 won't have these fields;
+# pipefail would otherwise abort before we reach the empty-check below.
+session_id=$( { grep '^session_id=' "$mode_file" || true; } | cut -d= -f2-)
+parent_id=$( { grep '^parent_id=' "$mode_file" || true; } | cut -d= -f2-)
 if [ -z "$session_id" ]; then
     echo "WARN: no session_id; skipping slot update"
     exit 0

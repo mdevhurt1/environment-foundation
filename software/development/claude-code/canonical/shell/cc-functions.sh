@@ -259,15 +259,33 @@ cc() {
         return 1
     fi
 
-    # Write a .cc-mode for the command center session if missing or stale.
-    # CC sessions are top-level (parent_id empty) and the slug is "cc".
+    if ! command -v tmux >/dev/null 2>&1; then
+        _cc_die "tmux is required for Phase 2; install with: sudo apt install tmux"
+        return 1
+    fi
+
+    local tmux_name
+    tmux_name=$(_cc_company_tmux_session)
+
+    # If the company tmux session already exists, just attach. The CC window
+    # may already be running; don't disturb it.
+    if _cc_company_tmux_exists; then
+        _cc_log "attaching to existing company tmux session"
+        tmux attach-session -t "$tmux_name"
+        return $?
+    fi
+
+    # Otherwise, create the session detached, write a CC .cc-mode and tree slot,
+    # then attach. The first window (named "cc") runs claude in the CC workspace.
     local session_id
     session_id=$(_cc_mint_session_id)
     _cc_write_mode_file "$cc_workspace" command-center cc "$cc_workspace" "$session_id" ""
 
     _cc_log "COMMAND CENTER: session_id=$session_id"
-    cd "$cc_workspace" || return 1
-    claude
+
+    # Create tmux session with first window in the CC workspace running claude.
+    tmux new-session -d -s "$tmux_name" -n "cc" -c "$cc_workspace" "claude"
+    tmux attach-session -t "$tmux_name"
 }
 
 # ---- cc-doctor (delegates to script) ----

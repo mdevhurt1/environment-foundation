@@ -14,8 +14,17 @@ source "$REPO_ROOT/shared/logging.sh"
 
 require_not_root
 
-# Tier-specific functions added below by later tasks:
-# apply_vitals_dconf      — Task 3.3
+fail() { log_error "$*"; exit 1; }
+
+apply_vitals_dconf() {
+  log_info "Applying Vitals dconf settings..."
+  local f="$CANONICAL/tier1-vitals/dconf-vitals.ini"
+  if [[ ! -f "$f" ]]; then
+    fail "Canonical Vitals dconf not found at $f — run Task 3.1 to capture it."
+  fi
+  dconf load /org/gnome/shell/extensions/vitals/ < "$f"
+  log_ok "Vitals settings applied (effective at next GNOME session login)."
+}
 
 detect_amd_card() {
   local c
@@ -57,7 +66,7 @@ register_conky_autostart() {
 }
 
 main() {
-  # apply_vitals_dconf       # added in Task 3.3
+  apply_vitals_dconf
   place_conky_configs
   register_conky_autostart
   log_ok  "Configure complete."

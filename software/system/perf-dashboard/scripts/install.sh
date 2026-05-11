@@ -14,6 +14,8 @@ source "$REPO_ROOT/shared/logging.sh"
 
 require_not_root
 
+fail() { log_error "$*"; exit 1; }
+
 require_x11_or_warn() {
   if [[ "${XDG_SESSION_TYPE:-}" != "x11" ]]; then
     log_warn "session is '${XDG_SESSION_TYPE:-unknown}'. Tier 2 (Conky) requires X11."
@@ -34,9 +36,56 @@ require_gnome() {
 # Tier-specific functions are added below by later tasks.
 # install_apt_packages   — Task 2.4
 # run_sensors_detect     — Task 2.4
-# install_netdata        — Task 1.3
-# verify_netdata_bind    — Task 1.3
 # install_vitals         — Task 3.2
+
+install_netdata() {
+  if command -v netdata >/dev/null 2>&1 && systemctl is-enabled --quiet netdata; then
+    log_info "Netdata already installed — skipping kickstart"
+  else
+    log_info "Installing Netdata (official kickstart, telemetry disabled)..."
+    bash <(curl -SsL https://my-netdata.io/kickstart.sh) \
+      --stable-channel --disable-telemetry --no-updates --non-interactive
+  fi
+
+  log_info "Applying canonical Netdata config..."
+  sudo cp "$CANONICAL/tier3-netdata/netdata.conf" /etc/netdata/netdata.conf
+  sudo chown root:netdata /etc/netdata/netdata.conf
+  sudo chmod 0644 /etc/netdata/netdata.conf
+
+  # Copy any custom alert overrides (initially empty).
+  if [[ -d "$CANONICAL/tier3-netdata/health.d" ]]; then
+    sudo mkdir -p /etc/netdata/health.d
+    # Copy non-dotfiles only (.gitkeep is a repo marker, not a Netdata file).
+    find "$CANONICAL/tier3-netdata/health.d" -maxdepth 1 -type f ! -name '.*' -exec sudo cp {} /etc/netdata/health.d/ \;
+  fi
+
+  log_info "Restarting Netdata..."
+  sudo systemctl restart netdata
+}
+
+verify_netdata_bind() {
+  log_info "Waiting up to 15s for Netdata to come up..."
+  local attempt
+  for attempt in $(seq 1 15); do
+    if curl -sf "http://127.0.0.1:19999/api/v1/info" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 1
+  done
+
+  log_info "Verifying Netdata bind..."
+  local listening
+  listening=$(ss -tlnp 2>/dev/null | grep ':19999' || true)
+  if [[ -z "$listening" ]]; then
+    fail "Nothing listening on port 19999 — Netdata may have failed to start. Check: journalctl -u netdata"
+  fi
+  echo "$listening" | grep -q '127.0.0.1:19999' || \
+    fail "Netdata not bound to 127.0.0.1:19999. Found: $listening"
+  if echo "$listening" | grep -qE '0\.0\.0\.0|\[::\]'; then
+    fail "SECURITY: Netdata bound to wildcard interface — refusing install. Found: $listening"
+  fi
+  log_ok "Netdata bound to 127.0.0.1:19999 only"
+}
 
 main() {
   require_x11_or_warn

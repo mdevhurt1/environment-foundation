@@ -36,7 +36,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "mkdir -p \"$HOME/.claude/debug\" && date -Iseconds >> \"$HOME/.claude/debug/session-start-hook.log\"; printf '{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"Bookend ritual: invoke the session-start skill (via the Skill tool) now to bootstrap this session — verify .cc-mode, write the tree slot, surface vault context, and capture the one-sentence goal.\"}}\\n'"
+            "command": "mkdir -p \"$HOME/.claude/debug\" && date -Iseconds >> \"$HOME/.claude/debug/session-start-hook.log\"; printf '{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"<EXTREMELY-IMPORTANT>BOOKEND RITUAL — MANDATORY. Before generating ANY response to the user (including clarifying questions or acknowledgements), you MUST invoke the session-start skill via the Skill tool. The skill is named exactly `session-start` and is available now. This applies regardless of what the user types as their first message — even `hi`, even a direct question. Running the skill is a non-negotiable precondition for this session because it writes the tree slot, verifies .cc-mode, surfaces vault context, and locks in the session goal. After the skill completes its checklist, then respond to the user.</EXTREMELY-IMPORTANT>\"}}\\n'"
           }
         ]
       }

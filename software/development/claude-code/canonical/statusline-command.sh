@@ -48,10 +48,12 @@ fi
 # --- mode badge ---
 mode_badge=""
 case "$mode" in
-    exploration) mode_badge=$(printf '\033[01;33m[EXPLORE%s]\033[00m ' "${slug:+ $slug}") ;;
-    build)       mode_badge=$(printf '\033[01;31m[BUILD]\033[00m ') ;;
-    continue)    mode_badge=$(printf '\033[01;36m[CONTINUE]\033[00m ') ;;
-    *)           mode_badge=$(printf '\033[01;90m[bare]\033[00m ') ;;
+    exploration)    mode_badge=$(printf '\033[01;33m[EXPLORE%s]\033[00m ' "${slug:+ $slug}") ;;
+    build)          mode_badge=$(printf '\033[01;31m[BUILD]\033[00m ') ;;
+    continue)       mode_badge=$(printf '\033[01;36m[CONTINUE]\033[00m ') ;;
+    branched)       mode_badge=$(printf '\033[01;35m[BRANCH%s]\033[00m ' "${slug:+ $slug}") ;;
+    command-center) mode_badge=$(printf '\033[01;37m[EA]\033[00m ') ;;
+    *)              mode_badge=$(printf '\033[01;90m[bare]\033[00m ') ;;
 esac
 
 # --- assemble ---

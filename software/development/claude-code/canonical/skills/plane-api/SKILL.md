@@ -242,15 +242,35 @@ DELETE /api/v1/workspaces/{workspace_slug}/projects/{project_id}/modules/{module
 
 | Slug | Purpose |
 |---|---|
-| `homelab` | Home lab infrastructure (Plane Stack, AI Stack, Media Stack, Monitoring, Infrastructure) |
-| `umd` | University coursework (ENPM 701 Grand Challenge, ENPM 673 Final Project) |
+| `homelab` | Home lab infrastructure (Plane Stack, AI Stack, Media Stack, Monitoring, Infrastructure, Research Queue) |
+| `umd` | University coursework (Spring 2026 cohort fully archived 2026-05-19; reserved for future terms) |
 
-## Known Projects (umd workspace)
-
-Avoid a lookup round-trip by using these IDs directly:
+## Known Projects (homelab workspace)
 
 | Identifier | Name | Project ID |
 |---|---|---|
-| `GC701` | ENPM 701 Grand Challenge | `0f180c25-7635-4f1c-b0ab-295027f82439` |
-| `ENPM701` | ENPM 701 Final Project | `16cf8028-0496-41a2-bc81-a6fca87eacad` |
-| `ENPM673` | ENPM 673 Final Project (Visual Odometry) | `3f2f1379-f6e7-4088-bcf6-0e3e1e9b2ece` |
+| `PLANE` | Plane Stack | `870b6c1b-983a-4dae-b0e5-20474fe928ad` |
+| `INFRA` | Infrastructure | `9c19f93e-3d33-4e2d-8a39-e76cf983caf3` |
+| `MEDIA` | Media Stack | `b5fdad68-311f-4bba-b50a-8cc938e43249` |
+| `AI_ST` | AI Stack | `06588b14-1056-4369-b2a8-a5d27f624265` |
+| `MONIT` | Monitoring | `e056f3d9-a6a6-40ef-948c-09909b6a1fa6` |
+| `RESEARCH` | Research Queue | `70bcb81f-1336-44bb-a78a-79e890445c82` |
+
+## Archived Projects
+
+The umd workspace is empty as of 2026-05-19 (Spring 2026 coursework complete). For reference if those archives are unarchived:
+
+| Identifier | Name | Project ID | Archived |
+|---|---|---|---|
+| `ENPM701` | ENPM 701 Grand Challenge (held all ENPM701 work including Phase 5/6 final-project issues #14–#26) | `0f180c25-7635-4f1c-b0ab-295027f82439` | 2026-05-19 |
+| `ENPM673` | ENPM 673 Final Project (Visual Odometry) | `3f2f1379-f6e7-4088-bcf6-0e3e1e9b2ece` | 2026-05-19 |
+
+## Operational Notes
+
+- **Intermittent failures vs sandbox/auth issues:** If HTTP requests return `000` / timeouts after earlier requests succeeded in the same session, the most likely cause is **the UDM SE IPS/Threat Management dropping the inter-VLAN HTTP session** — not a Plane stack outage. The workstation is on `192.168.2.0/24` and Plane on `192.168.1.0/24`, so traffic traverses the UDM and IPS signatures occasionally flag legitimate API payloads (UUID paths, large JSON, bearer tokens). Diagnose:
+  1. `nc -zv 192.168.1.82 80` — if TCP succeeds but HTTP times out, it's a session-level drop (IPS smoking gun).
+  2. Check the UDM threat log (UniFi controller → Insights → Threats, or Settings → Security → Threat Management → History) for events involving `192.168.1.82` around the failure time.
+  3. Only then suspect the Plane stack. VM 107 has very generous resource headroom (~5.8 GB RAM, 11 containers using <2 GB combined) — actual stack-internal outages are rare.
+  Don't churn on `no_proxy`/auth workarounds when the symptom is a sudden cliff after working calls. See cross-task memory `project_udm_ips_blocks_lan_api.md` (2026-05-19 root-cause investigation).
+- **Archive endpoint:** `POST /api/v1/workspaces/{slug}/projects/{id}/archive/` returns 204 on success. Sometimes returns 404 on the response despite the archive completing — verify with a follow-up list query using `?include_archived=true`.
+- **Delete endpoint:** `DELETE /api/v1/workspaces/{slug}/projects/{id}/` returns 204 on success.

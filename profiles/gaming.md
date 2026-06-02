@@ -20,6 +20,7 @@ Gaming-focused setup. Assumes the platform baseline is already complete.
 ### 2. Gaming software
 
 - [ ] [Steam — install](../software/gaming/steam/scripts/install.sh) `[gaming]`
+- [ ] [Discord — install](../software/gaming/discord/scripts/install.sh) `[gaming]`
 
 ### 3. Post-install
 

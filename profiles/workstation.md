@@ -37,3 +37,4 @@ Run all baseline steps in order:
 ### 4. Gaming *(skip on workplace or headless machines)*
 
 - [ ] [Steam — install](../software/gaming/steam/scripts/install.sh) `[gaming]`
+- [ ] [Discord — install](../software/gaming/discord/scripts/install.sh) `[gaming]`

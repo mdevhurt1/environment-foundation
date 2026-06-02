@@ -39,3 +39,20 @@ else
     sudo npm install -g @anthropic-ai/claude-code
     log_ok "Claude Code installed: $(claude --version)"
 fi
+
+# sops is required by environment-secrets/install.sh to decrypt
+# settings.local.json. Not in Ubuntu apt repos; install from GitHub release .deb.
+log_info "Checking sops installation..."
+if command -v sops &>/dev/null; then
+    log_ok "sops $(sops --version --check-for-updates 2>/dev/null | head -1 || sops --version 2>&1 | head -1) already installed, skipping"
+else
+    log_info "Installing sops from GitHub release..."
+    SOPS_URL=$(curl -fsSL https://api.github.com/repos/getsops/sops/releases/latest \
+        | jq -r '.assets[] | select(.name | test("amd64\\.deb$")) | .browser_download_url')
+    [ -n "$SOPS_URL" ] || { log_error "could not determine sops .deb URL"; exit 1; }
+    SOPS_DEB=$(mktemp --suffix=.deb)
+    trap 'rm -f "$SOPS_DEB"' EXIT
+    curl -fsSL -o "$SOPS_DEB" "$SOPS_URL"
+    sudo apt-get install -y "$SOPS_DEB"
+    log_ok "sops installed: $(sops --version 2>&1 | head -1)"
+fi

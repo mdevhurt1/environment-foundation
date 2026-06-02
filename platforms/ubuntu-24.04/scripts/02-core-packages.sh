@@ -29,6 +29,8 @@ PACKAGES=(
     ca-certificates
     gnupg
     lsb-release
+    tmux
+    age
 )
 
 log_info "Installing core packages..."

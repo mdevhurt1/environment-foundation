@@ -57,12 +57,23 @@ else
     ok "no hardcoded user home paths in canonical/"
 fi
 
-# ---- 3. ~/.bashrc sources cc-functions.sh ----
+# ---- 3. Login shell's rc sources cc-functions.sh ----
 heading "Shell integration"
-if grep -Fq 'cc-functions.sh' "$HOME/.bashrc" 2>/dev/null; then
-    ok "$HOME/.bashrc sources cc-functions.sh"
+# Check whichever rc file the user's login shell actually reads. configure.sh
+# writes to both ~/.bashrc and ~/.zshrc when they exist; doctor must check the
+# one that will actually run for an interactive login.
+login_shell=$(basename "${SHELL:-bash}")
+case "$login_shell" in
+    bash) rc="$HOME/.bashrc" ;;
+    zsh)  rc="$HOME/.zshrc"  ;;
+    *)    rc="" ;;
+esac
+if [ -z "$rc" ]; then
+    warn "unrecognized login shell: $SHELL — cannot verify cc-functions sourcing"
+elif grep -Fq 'cc-functions.sh' "$rc" 2>/dev/null; then
+    ok "$rc sources cc-functions.sh"
 else
-    fail "$HOME/.bashrc does not source cc-functions.sh (cc-* commands unavailable)"
+    fail "$rc does not source cc-functions.sh (cc-* commands unavailable in $login_shell)"
 fi
 
 # ---- 4. settings.local.json (secrets) ----

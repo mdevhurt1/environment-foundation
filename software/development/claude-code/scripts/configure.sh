@@ -74,18 +74,24 @@ link "$CANONICAL/shell/cc-functions.sh" "$CLAUDE_DIR/cc-functions.sh"
 link "$CANONICAL/shell/cc-tree-slot-write.sh"  "$CLAUDE_DIR/cc-tree-slot-write.sh"
 link "$CANONICAL/shell/cc-tree-slot-update.sh" "$CLAUDE_DIR/cc-tree-slot-update.sh"
 
-# ---- ~/.bashrc source line (idempotent) ----
+# ---- shell rc source line (idempotent) ----
+# Write to whichever rc files exist. 03-shell-setup.sh switches the default
+# shell to zsh; configuring both keeps wrappers available regardless of which
+# shell the user lands in.
 SOURCE_LINE='[ -f ~/.claude/cc-functions.sh ] && source ~/.claude/cc-functions.sh'
-if ! grep -Fxq "$SOURCE_LINE" "$HOME/.bashrc" 2>/dev/null; then
-    cat >> "$HOME/.bashrc" <<EOF
+for rc in "$HOME/.bashrc" "$HOME/.zshrc"; do
+    [ -f "$rc" ] || continue
+    if grep -Fxq "$SOURCE_LINE" "$rc" 2>/dev/null; then
+        log_info "$rc already sources cc-functions.sh (skip)"
+    else
+        cat >> "$rc" <<EOF
 
 # Claude Code workflow wrappers (cc-explore, cc-build, cc-continue)
 $SOURCE_LINE
 EOF
-    log_ok "added cc-functions source line to ~/.bashrc"
-else
-    log_info "$HOME/.bashrc already sources cc-functions.sh (skip)"
-fi
+        log_ok "added cc-functions source line to $rc"
+    fi
+done
 
 # ---- settings.local.json: warn if missing ----
 if [ ! -f "$CLAUDE_DIR/settings.local.json" ]; then
@@ -99,4 +105,6 @@ fi
 log_ok "Claude Code SOP configuration complete"
 log_info "Open a new shell (or 'source ~/.bashrc') to pick up cc-* wrappers"
 log_info "Run 'cc-doctor' to verify the install"
-[ -d "$BACKUP_DIR" ] && log_info "Pre-install state preserved at: $BACKUP_DIR"
+if [ -d "$BACKUP_DIR" ]; then
+    log_info "Pre-install state preserved at: $BACKUP_DIR"
+fi

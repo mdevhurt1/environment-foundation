@@ -1,0 +1,4 @@
+# Switch to AC profile when charger connected
+SUBSYSTEM=="power_supply", ATTR{online}=="1", RUN+="/usr/local/bin/ac-profile"
+# Switch to battery profile when charger disconnected
+SUBSYSTEM=="power_supply", ATTR{online}=="0", RUN+="/usr/local/bin/battery-profile"

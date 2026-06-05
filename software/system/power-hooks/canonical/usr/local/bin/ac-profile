@@ -1,0 +1,14 @@
+#!/bin/bash
+# AC desktop: balanced performance (let TLP manage)
+for epp in /sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference; do
+  echo balance_performance > "$epp"
+done
+[ -w /sys/firmware/acpi/platform_profile ] && echo balanced > /sys/firmware/acpi/platform_profile
+
+# razer-battery-apply: restore backlight to ~60% (153/255) on AC.
+# amdgpu_bl1 max=255; CEO can tune by editing this script.
+if [ -w /sys/class/backlight/amdgpu_bl1/brightness ]; then
+  echo 153 > /sys/class/backlight/amdgpu_bl1/brightness
+fi
+
+echo "AC profile active (EPP=balance_performance, platform=balanced, backlight=153/255)"

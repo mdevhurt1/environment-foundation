@@ -1,0 +1,15 @@
+#!/bin/bash
+# Battery: power saving
+for epp in /sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference; do
+  echo balance_power > "$epp"
+done
+[ -w /sys/firmware/acpi/platform_profile ] && echo low-power > /sys/firmware/acpi/platform_profile
+
+# razer-battery-apply: clamp backlight to ~22% (56/255) on battery.
+# Largest empirical lever per razer-battery-opt analysis (~2-4W).
+# CEO can tune by editing this script or override live with brightness keys.
+if [ -w /sys/class/backlight/amdgpu_bl1/brightness ]; then
+  echo 56 > /sys/class/backlight/amdgpu_bl1/brightness
+fi
+
+echo "Battery profile active (EPP=balance_power, platform=low-power, backlight=56/255)"

@@ -30,7 +30,9 @@ log_info "Verifying Razer module install..."
 check "DKMS razer module built/installed" bash -c 'dkms status 2>/dev/null | grep -qi razer'
 
 # 2. Daemon binary present (version prints).
-check "openrazer-daemon available" bash -c 'openrazer-daemon -v'
+#    Use --version (not -v, which is --verbose and tries to *start* a second
+#    daemon → fails the pidfile lock when the systemd user service is running).
+check "openrazer-daemon available" bash -c 'openrazer-daemon --version'
 
 # 3. User in plugdev group (the reboot gate took effect).
 check "$USER in plugdev group" bash -c 'id -nG "$USER" | tr " " "\n" | grep -qx plugdev'

@@ -24,16 +24,6 @@
     ],
     "defaultMode": "default"
   },
-  "sandbox": {
-    "network": {
-      "allowLocalBinding": true
-    },
-    "filesystem": {
-      "allowWrite": [
-        "~/vault/20-surface/company/tree/sessions"
-      ]
-    }
-  },
   "hooks": {
     "SessionStart": [
       {
@@ -62,8 +52,16 @@
     "claude-md-management@claude-plugins-official": true,
     "github@claude-plugins-official": true
   },
-  "effortLevel": "high",
-  "advisorModel": "opus",
+  "sandbox": {
+    "network": {
+      "allowLocalBinding": true
+    },
+    "filesystem": {
+      "allowWrite": [
+        "~/vault/20-surface/company/tree/sessions"
+      ]
+    }
+  },
   "autoUpdatesChannel": "stable",
   "skipDangerousModePermissionPrompt": true,
   "theme": "auto",
@@ -71,6 +69,5 @@
   "preferredNotifChannel": "auto",
   "remoteControlAtStartup": true,
   "inputNeededNotifEnabled": true,
-  "agentPushNotifEnabled": true,
-  "model": "opus"
+  "agentPushNotifEnabled": true
 }

@@ -190,10 +190,14 @@ End with this exact one-liner:
 
 ## Special cases
 
-**Vault sessions** (cwd is `~/vault/` or under): The model is forbidden
-from writing to `00-core/`, `10-middle/`, or `40-journal/` regardless
-of what the user asks. State this guardrail explicitly at the end of
-Step 6 when in vault context. Reads of all paths are fine.
+**Vault sessions** (cwd is `~/vault/` or under): The rings are two-tier.
+`00-core/` and `40-journal/` are closed absolutely — never write there,
+regardless of what the user asks; no approval path exists. `10-middle/` is
+not written as a matter of course; the sole exception is the
+`ring-maintenance` skill's Phase 2, which writes one CEO-approved note at a
+time, per item, from the command-center session. State this guardrail
+explicitly at the end of Step 6 when in vault context. Reads of all paths
+are fine.
 
 **No vault present**: If `~/vault/` doesn't exist, skip Step 3 entirely
 and warn the user once: "vault not mounted — context surfacing skipped;

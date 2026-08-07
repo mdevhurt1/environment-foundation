@@ -99,15 +99,22 @@ machine-specific facts to memory in the first place.
 Ask: "Anything from this session deserves promotion to the middle or
 core ring?"
 
-If yes, append a one-line entry to the review queue:
+If yes, append a one-line entry to the promotion queue:
 ```bash
+mkdir -p ~/vault/20-surface/company/_command-center/state
 echo "- $(date +%Y-%m-%d) — <one-line description> (see <pointer>)" \
-  >> ~/vault/10-middle/decisions/_review-queue.md
+  >> ~/vault/20-surface/company/_command-center/state/promotion-queue.md
 ```
 
-**Never** create or edit notes in `00-core/`, `10-middle/`, or `40-
-journal/` directly. The queue is the only writable seam between you and
-the inner rings; promotion happens in the user's weekly review, not now.
+The queue lives on the **surface** ring. Appending to it is an unattended,
+unreviewed write, which is exactly the kind of write the inner rings do not
+accept — so it goes here instead. The `ring-maintenance` skill drains this
+queue weekly with the CEO present.
+
+**Never** create or edit notes in `00-core/`, `10-middle/`, or `40-journal/`
+from this skill. Promotion into `10-middle` happens only in
+`ring-maintenance` Phase 2, per-item, with the CEO approving specific
+content. `00-core/` and `40-journal/` are human-only with no approval path.
 
 ## Step 6: Worktree fold (exploration mode only)
 

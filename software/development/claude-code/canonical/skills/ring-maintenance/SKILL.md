@@ -36,8 +36,11 @@ Three gates, each of which must halt the pass:
    unavailable. Say so and ask whether to run Phase 1 only.
 2. **Vault.** If missing, abort. Unlike `end-conversation` there is nothing
    to queue — the vault is the entire subject.
-3. **Obsidian.** If closed, run the scan and auto-apply the index fixes, but
-   **refuse every archive move**. LiveSync (CouchDB) reverts vault deletes
+3. **Obsidian.** If closed, run the scan and apply the in-place writes Step 4
+   enumerates, but **refuse every archive move**. This result is an early
+   warning only — Step 4 re-checks it immediately before the first move,
+   since the dispatch in Step 3 can take minutes. LiveSync (CouchDB) reverts
+   vault deletes
    made while Obsidian is closed, and a move is a delete-plus-create to the
    sync layer — archiving hundreds of slots with Obsidian closed risks
    CouchDB resurrecting all of them. See
@@ -134,7 +137,15 @@ you take on its findings:
    archiving a live child's parent would silently break its event
    delivery. Present the list; on confirmation, move the slot `.md` **and**
    its `.events/` directory together (when `has_events=yes`) to
-   `tree/sessions/_archive/`. Never move one without the other.
+   `tree/sessions/_archive/`. Never move one without the other. Move only
+   the exact slot IDs the confirmed rows name, one row at a time. **Never
+   use a glob or wildcard for an archive move** — not `*.md`, not
+   `tree/sessions/*` — no matter how long the list is, and a normal run
+   lists well over a hundred rows. The scanner's exclusions (`running`
+   slots, under-threshold slots, parents of a running child, and therefore
+   the slot this very session is writing to) exist *only* in the row list:
+   a glob sees none of them and discards every safety guarantee the scan
+   provides.
 3. **Task-folder archival.** `propose.tasks` rows are
    `<task_id><TAB><age_days><TAB><bytes>` — no file modified within
    `TASK_AGE_DAYS` and no `running` slot claims that `task_id`. Present the
@@ -153,11 +164,19 @@ you take on its findings:
    itself and anything ending `-brief.md`, which belongs to remit 4
    instead) — fold its entries into `promotion-queue.md`, deduplicating by
    entry text, then archive the original file to `state/_archive/`. This is
-   AUTO. `propose.markers` rows are
+   AUTO, but it is two actions with two different risk profiles: the append
+   into `promotion-queue.md` is an **in-place write** and is always safe,
+   while archiving the folded original is a **move** and is gated on the
+   same fresh Obsidian check as every other move in this step. With
+   Obsidian closed, fold and leave the originals where they are — the
+   dedupe by entry text makes next run's re-fold a no-op.
+   `propose.markers` rows are
    `<file><TAB><line><TAB><snippet>` grep hits for a promotion marker in
    `claude-memory/` or `tasks/` — grep is noisy, so each hit is a candidate
    the CEO must confirm before it becomes a `promotion-queue.md` entry;
-   never auto-write these.
+   never auto-write these. The `<file>` field is an **evidence pointer**
+   showing where the marker text was found; it is never a target. Nothing
+   in this remit moves, archives, or edits the file a marker row names.
 6. **Dead-link / orphan.** `report.dead_links` rows are
    `<source_file><TAB><link_text><TAB><near_match><TAB><distance>` — the
    scanner has already filtered out every unresolved `[[link]]` except
@@ -180,18 +199,56 @@ you take on its findings:
 Tier rules, restated for execution:
 
 - **AUTO** — apply without asking: `auto.index_add`, `auto.index_drop`,
-  `auto.promotion_fold`.
-- **PROPOSE** — present the list, get CEO confirmation, then execute as
-  **moves into `_archive/`**: `propose.slots`, `propose.tasks`,
-  `propose.state`, `propose.markers`.
+  `auto.promotion_fold`. Two of these are in-place writes; the fold's
+  archiving of the originals is a **move** and is gated like every other
+  move below.
+- **PROPOSE** — present the list, get CEO confirmation, then act. This tier
+  carries **two different kinds of action**. Never merge them:
+  - **Archive-moves** — `propose.slots`, `propose.tasks`, `propose.state`.
+    On confirmation, move the exact items named into the matching
+    `_archive/`, one at a time.
+  - **Queue-entry proposals** — `propose.markers`. On confirmation, append
+    the candidate as an **entry** in `promotion-queue.md`. **This tier
+    never moves, archives, or edits the files it names — the paths in
+    marker rows are evidence pointers, not targets.**
+
+  > **Warning — never archive a `propose.markers` path.** Marker rows are
+  > grep hits *inside* memory and task files. On a live vault the first row
+  > is `claude-memory/MEMORY.md`, the memory index itself: treating marker
+  > rows as an archive list would move `MEMORY.md` and its source memory
+  > files into `_archive/`, destroying the index the AUTO tier just
+  > repaired. If you are reaching for `mv` on a `propose.markers` row, stop
+  > — the only correct output is a line appended to `promotion-queue.md`.
 - **REPORT-ONLY** — never act: every `report.*` section.
 - `## anomalies` is always surfaced to the CEO. Never skip it silently — a
   quiet skip is how a GC pass reports "all clean" while stepping over the
   one real problem.
 
-If Step 1's Obsidian gate reported `CLOSED`, apply the AUTO index edits
-only and refuse every PROPOSE move this run — re-run once Obsidian is open
-to clear the backlog.
+**Re-check Obsidian immediately before the first move of the run.** Step 1's
+gate is an early warning, not the authority: a subagent dispatch sits between
+it and this step and can take minutes, and Obsidian can be closed inside that
+window. Before executing the first archive move, run the check again:
+
+```bash
+pgrep -x obsidian >/dev/null && echo "obsidian: running" || echo "obsidian: CLOSED"
+```
+
+If either check reports `CLOSED`, perform **no moves at all** this run. What
+remains permitted in this step with Obsidian closed is exactly this and
+nothing more:
+
+- `auto.index_add` and `auto.index_drop` edits to `MEMORY.md` — in-place
+  writes.
+- The `auto.promotion_fold` **append** into `promotion-queue.md` — an
+  in-place write. The folded originals stay where they are.
+- CEO-confirmed `propose.markers` candidates appended as entries in
+  `promotion-queue.md` — in-place writes.
+- Every `report.*` section and `## anomalies` — surfaced as always.
+
+Refused with Obsidian closed, without exception: every archive move —
+`propose.slots`, `propose.tasks`, `propose.state`, and the
+`auto.promotion_fold` originals. Re-run once Obsidian is open to clear the
+backlog.
 
 Archive destinations, all three created on first use — none exist on a
 fresh vault:
@@ -200,6 +257,9 @@ fresh vault:
 - `tasks/_archive/` — task-folder archival
 - `state/_archive/` — state/ hygiene, and the originals folded by
   promotion backlog assembly
+
+Every archive move names its source explicitly, one item at a time, in every
+remit. Globs and wildcards are never used for a move, whatever the row count.
 
 Nothing is ever hard-deleted, at any tier, anywhere. Every "removal" this
 skill performs is a move into an `_archive/` and is recoverable.
@@ -283,10 +343,15 @@ losing it.
 **LiveSync can undo the entire pass.** Obsidian LiveSync (CouchDB) reverts
 vault deletes made while Obsidian was closed. A move is a
 delete-plus-create to the sync layer, so archiving hundreds of slots with
-Obsidian closed risks CouchDB resurrecting all of them. Step 1's Obsidian
-gate exists for exactly this: verify Obsidian is running before executing
-any move, and refuse every archive step if it is not. Auto-applied index
-edits are unaffected — they are in-place writes, not moves. See
+Obsidian closed risks CouchDB resurrecting all of them. The Obsidian gate
+exists for exactly this: verify Obsidian is running immediately before
+executing any move — Step 1's result is an early warning, re-checked in
+Step 4 — and refuse every archive step if it is not. Unaffected, because
+they are in-place writes rather than moves: the `MEMORY.md` index edits,
+the `auto.promotion_fold` append into `promotion-queue.md`, and confirmed
+marker candidates appended to the queue. Everything that relocates a file
+is a move and is gated, including archiving the originals folded by
+`auto.promotion_fold`. See
 `claude-memory/reference_obsidian_livesync_deletes.md`.
 
 **Not the EA session.** The `10-middle` seam in Step 5 opens only when

@@ -211,6 +211,10 @@ if [ -d "$STATE" ]; then
     while IFS= read -r f; do
         n=$(basename "$f")
         [ "$n" = "promotion-queue.md" ] && continue
+        # *-brief.md belongs to the state-hygiene remit (PROPOSE archive), not
+        # the promotion fold — a session brief auto-folded into the queue
+        # would inject its own bullet lines as if they were candidates.
+        case "$n" in *-brief.md) continue ;; esac
         FOLD+=("$n")
     done < <(find "$STATE" -maxdepth 1 -name 'promotion-*.md' -type f | sort)
 fi

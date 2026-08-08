@@ -63,7 +63,7 @@ uninstall_tier3() {
   else
     log_warn "Netdata uninstaller not found — nothing to do."
   fi
-  sudo rm -rf /etc/netdata /var/cache/netdata /var/lib/netdata
+  sudo rm -rf /etc/netdata /var/cache/netdata /var/lib/netdata || true
   log_ok "Tier 3 removed."
 }
 

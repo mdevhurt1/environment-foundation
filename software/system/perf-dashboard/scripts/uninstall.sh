@@ -17,6 +17,15 @@ require_not_root
 
 VITALS_UUID="Vitals@CoreCoding.com"
 
+# power-profiles-daemon ships with the default Ubuntu 24.04 GNOME desktop.
+# install.sh's `apt-get install -y power-profiles-daemon` is a no-op on a
+# stock machine, so this module frequently isn't what put it there — used
+# below to decide whether to surface a dry-run warning.
+ppd_installed=0
+if dpkg -s power-profiles-daemon &>/dev/null; then
+  ppd_installed=1
+fi
+
 ASSUME_YES=0
 case "${1:-}" in
   --yes) ASSUME_YES=1 ;;
@@ -42,6 +51,18 @@ keep "your GNOME settings outside the vitals dconf subtree"
 
 log_warn "Netdata's historical metrics in /var/cache/netdata are deleted and"
 log_warn "cannot be recovered."
+
+if [ "$ppd_installed" -eq 1 ]; then
+  log_warn "power-profiles-daemon is a stock Ubuntu desktop package (it ships"
+  log_warn "with the default 24.04 GNOME install) that this module's install.sh"
+  log_warn "may not actually have installed — on a stock machine that apt-get"
+  log_warn "install is a no-op. Removing it drops the Balanced/Performance/"
+  log_warn "Power-Saver panel from GNOME Settings. Check before running with"
+  log_warn "--yes:"
+  log_warn "  dpkg -s power-profiles-daemon"
+  log_warn "Reinstate it afterward with:"
+  log_warn "  sudo apt-get install power-profiles-daemon"
+fi
 
 if [ "$ASSUME_YES" -ne 1 ]; then
   log_warn "Dry run — nothing was removed. Re-run with --yes to proceed."

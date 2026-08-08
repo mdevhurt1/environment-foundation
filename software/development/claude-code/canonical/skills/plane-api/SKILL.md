@@ -5,39 +5,44 @@ description: Use when making API calls to the self-hosted Plane instance — cre
 
 # Plane API Guide
 
-Self-hosted Plane at `http://192.168.1.82`. All requests require the auth header below.
+Self-hosted Plane at `http://plane.homelab` (currently `192.168.1.82`). Always use the
+hostname — it survives a VM IP change. All requests require the auth header below.
 
 ## Before You Start
 
-Check that your credentials are available:
+**The API key is NOT an environment variable.** It lives in
+`~/.claude/settings.local.json` under `.env.PLANE_API_KEY`, provisioned by the
+`environment-secrets` repo's `install.sh`. Claude Code does **not** inject that
+`env` block into the Bash tool's shell, so `$PLANE_API_KEY` is empty inside every
+tool call — and it is **not** in `~/.bashrc` or `~/.zshrc` either. Do not `echo
+$PLANE_API_KEY` and conclude the key is missing; read it from the JSON:
 
 ```bash
-echo $PLANE_API_KEY
+PLANE_API_KEY=$(python3 -c "import json,os;print(json.load(open(os.path.expanduser('~/.claude/settings.local.json')))['env']['PLANE_API_KEY'])")
 ```
 
-If this prints nothing, run `source ~/.bashrc` before proceeding. Do **not** continue with an empty `PLANE_API_KEY` — all requests will be rejected.
+If that errors with `KeyError` or `FileNotFoundError`, the secrets install has not
+run on this machine — clone `environment-secrets` and run its `install.sh`. Do
+**not** continue with an empty key; every request returns
+`{"detail": "Authentication credentials were not provided."}` (HTTP 401).
 
-**Sandboxed subshell warning:** Claude Code's Bash sandbox does not inherit exported environment variables. Even if `$PLANE_API_KEY` is set in your shell session, it will likely be empty inside tool calls. If any request returns `{"detail": "Authentication credentials were not provided."}`, the env var didn't make it through. Fix: read the key directly from `~/.bashrc` and pass it inline. Use this pattern — it tolerates quoted *or* unquoted values in `~/.bashrc`:
-
-```bash
-PLANE_API_KEY=$(grep -oP "(?<=^export PLANE_API_KEY=)['\"]?\K[^'\"]+" ~/.bashrc)
-```
-
-If you use a simpler pattern that assumes quotes (e.g. `(?<=PLANE_API_KEY=')[^']*`) and the value is unquoted, it will silently return empty and every subsequent request will fail with auth errors.
-
-**Network access from the sandbox:** The sandbox sets `no_proxy` to include `192.168.0.0/16`, which bypasses the sandbox proxy for LAN addresses. Direct connections to LAN IPs are then blocked by the sandbox firewall — `curl` returns `Failed to connect to 192.168.1.82 port 80: Network is unreachable`. To reach Plane (or any LAN service) from within the sandbox, override `no_proxy` on every call:
+**Network access from the sandbox:** The sandbox sets `no_proxy` to include
+`192.168.0.0/16`, which bypasses the sandbox proxy for LAN addresses. Direct
+connections to LAN addresses are then blocked by the sandbox firewall — `curl`
+returns `Failed to connect ... Network is unreachable`. To reach Plane (or any LAN
+service) from within the sandbox, override `no_proxy` on every call:
 
 ```bash
 no_proxy="" NO_PROXY="" curl -s -H "X-Api-Key: $PLANE_API_KEY" \
-  "http://192.168.1.82/api/v1/workspaces/homelab/projects/"
+  "http://plane.homelab/api/v1/workspaces/homelab/projects/"
 ```
 
 **Combined first-call template** — copy-paste this for the very first request of a session, since it handles both the auth and network gotchas at once:
 
 ```bash
-PLANE_API_KEY=$(grep -oP "(?<=^export PLANE_API_KEY=)['\"]?\K[^'\"]+" ~/.bashrc)
+PLANE_API_KEY=$(python3 -c "import json,os;print(json.load(open(os.path.expanduser('~/.claude/settings.local.json')))['env']['PLANE_API_KEY'])")
 no_proxy="" NO_PROXY="" curl -s -H "X-Api-Key: $PLANE_API_KEY" \
-  "http://192.168.1.82/api/v1/workspaces/homelab/projects/"
+  "http://plane.homelab/api/v1/workspaces/homelab/projects/"
 ```
 
 ---
@@ -48,7 +53,7 @@ no_proxy="" NO_PROXY="" curl -s -H "X-Api-Key: $PLANE_API_KEY" \
 X-Api-Key: $PLANE_API_KEY
 ```
 
-Base URL pattern: `http://192.168.1.82/api/v1/workspaces/{workspace_slug}/`
+Base URL pattern: `http://plane.homelab/api/v1/workspaces/{workspace_slug}/`
 
 Known workspace slugs: `homelab`, `umd`
 

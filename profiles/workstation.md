@@ -27,7 +27,7 @@ Run all baseline steps in order:
 - [ ] [Claude Code — configure](../software/development/claude-code/scripts/configure.sh) `[dev]`
 - [ ] [Docker — install](../software/development/docker/scripts/install.sh) `[dev]`
 - [ ] [Docker — configure](../software/development/docker/scripts/configure.sh) `[dev]`
-- [ ] [Plane — configure](../software/development/claude-code/integrations/plane/README.md) `[workstation]`
+- [ ] [Plane — verify](../software/development/claude-code/integrations/plane/README.md) `[workstation]` — read-only check; run after Claude Code configure and `environment-secrets/install.sh`
 
 ### 3. System
 

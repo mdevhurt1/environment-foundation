@@ -4,7 +4,8 @@
 #              plus two repo-wide invariants. Exits non-zero on any violation.
 # Profiles:    n/a — repo tooling, not a provisioning step
 # Platforms:   ubuntu-24.04
-# Dependencies: bash 4+, coreutils, grep, find, git (shellcheck NOT required — see INFRA-22)
+# Dependencies: bash 4+, coreutils (incl. timeout), grep, find, git
+#              (shellcheck NOT required — see INFRA-22)
 # Idempotent.
 
 # NOTE: no -e — the linter must run every check and report every violation.
@@ -97,11 +98,17 @@ check_script() {
     if ! { grep -q 'ASSUME_YES' "$file" && grep -q -- '--yes' "$file"; }; then
       problems+=("no --yes guard (must dry-run and exit 0 without --yes)")
     fi
-    if grep -qE '^[[:space:]]*read[[:space:]]+.*-p' "$file"; then
+    # Matches the -p flag in every spelling: `read -p`, `read -r -p`, and the
+    # combined `read -rp` (where -p is not preceded by a literal `-`). Walks
+    # whole tokens so intervening flags and their arguments are allowed.
+    if grep -qE '^[[:space:]]*read[[:space:]]+([^[:space:]]+[[:space:]]+)*-[[:alnum:]]*p' "$file"; then
       problems+=("uses an interactive read -p prompt (use the --yes flag instead)")
     fi
     if [ "$DRY_RUN_UNINSTALL" -eq 1 ]; then
-      if bash "$file" >/dev/null 2>&1; then
+      # stdin from /dev/null so an interactive prompt fails instead of blocking
+      # on a read whose prompt went to the swallowed stdout; timeout so any
+      # other blocking call fails loudly rather than hanging the linter.
+      if timeout 60 bash "$file" </dev/null >/dev/null 2>&1; then
         ok "$rel: dry run (no args) exited 0"
       else
         fail "$rel: dry run (no args) exited non-zero"
@@ -201,13 +208,34 @@ check_profile_links() {
 # Guardrail: the two sourced libraries must stay non-executable. They are
 # libraries, not entry points; an exec bit on them invites direct invocation.
 check_libraries_not_executable() {
-  local lib
+  local lib mode bad
   for lib in \
     "shared/logging.sh" \
     "software/development/claude-code/canonical/shell/cc-functions.sh"; do
+
+    # A missing file is not a pass. Without this, moving or renaming the
+    # library would silently turn the only assertion protecting live
+    # infrastructure into a green line about a path that is not there.
+    if [ ! -e "$REPO_ROOT/$lib" ]; then
+      fail "$lib is MISSING — cannot vouch for a sourced library that is not there"
+      continue
+    fi
+
+    bad=0
     if [ -x "$REPO_ROOT/$lib" ]; then
-      fail "$lib is executable — it is a sourced library and must stay mode 100644"
-    else
+      fail "$lib is executable in the working tree — it is a sourced library and must stay mode 100644"
+      bad=1
+    fi
+
+    # The contract states the requirement as the git index mode: a chmod -x
+    # that was never committed still lands as 100755 in a fresh clone.
+    mode="$(git -C "$REPO_ROOT" ls-files -s -- "$lib" 2>/dev/null | awk '{print $1}')"
+    if [ -n "$mode" ] && [ "$mode" != "100644" ]; then
+      fail "$lib git index mode is $mode, expected 100644 for a sourced library (git update-index --chmod=-x)"
+      bad=1
+    fi
+
+    if [ "$bad" -eq 0 ]; then
       ok "$lib is correctly non-executable (sourced library)"
     fi
   done

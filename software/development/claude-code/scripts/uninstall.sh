@@ -56,7 +56,12 @@ is_canonical_link() {
 }
 
 # Newest backup configure.sh made, if any.
+# Returns empty (and 0) when there is nothing to find. The directory guard
+# matters: without it `find` on a missing ~/.claude exits 1, pipefail
+# propagates that, and set -e would abort the dry run before it printed the
+# KEEP block — a hard failure for the legitimate nothing-to-do case.
 latest_backup() {
+  [ -d "$CLAUDE_DIR" ] || return 0
   find "$CLAUDE_DIR" -maxdepth 1 -type d -name '.backup-*' 2>/dev/null | sort | tail -1
 }
 
@@ -86,7 +91,9 @@ for i in "${!LINK_NAMES[@]}"; do
   suffix="${LINK_SUFFIXES[$i]}"
   if is_canonical_link "$name" "$suffix"; then
     plan "symlink: $CLAUDE_DIR/$name -> $(readlink "$CLAUDE_DIR/$name")"
-  elif [ -e "$CLAUDE_DIR/$name" ]; then
+  elif [ -e "$CLAUDE_DIR/$name" ] || [ -L "$CLAUDE_DIR/$name" ]; then
+    # -L as well as -e: [ -e ] is false for a symlink whose target is gone, and
+    # a dangling foreign link must still be reported, not silently ignored.
     skip "$CLAUDE_DIR/$name exists but is not a canonical symlink — LEFT ALONE"
   fi
 done
@@ -129,7 +136,8 @@ for i in "${!LINK_NAMES[@]}"; do
   if is_canonical_link "$name" "$suffix"; then
     rm "$CLAUDE_DIR/$name"
     log_ok "removed symlink $CLAUDE_DIR/$name"
-  elif [ -e "$CLAUDE_DIR/$name" ]; then
+  elif [ -e "$CLAUDE_DIR/$name" ] || [ -L "$CLAUDE_DIR/$name" ]; then
+    # Same widening as the plan loop above, so both runs agree.
     log_warn "$CLAUDE_DIR/$name is not a canonical symlink — left alone"
   fi
 done
@@ -137,9 +145,20 @@ done
 # --- Remove the ~/.bashrc line and the comment above it --------------------
 if grep -Fxq "$BASHRC_LINE" "$HOME/.bashrc" 2>/dev/null; then
   cp "$HOME/.bashrc" "$HOME/.bashrc.pre-claude-uninstall"
-  grep -Fxv "$BASHRC_LINE" "$HOME/.bashrc.pre-claude-uninstall" \
-    | grep -Fxv '# Claude Code workflow wrappers (cc-explore, cc-build, cc-continue)' \
-    > "$HOME/.bashrc"
+  # Filter the BACKUP into a temp file, then mv it into place. Never redirect
+  # straight into ~/.bashrc: the redirect truncates before the pipeline runs,
+  # so a chain that matches nothing (a ~/.bashrc holding only our two managed
+  # lines) would leave the real file empty AND abort under pipefail before the
+  # log line naming the backup ever printed. mktemp in $HOME keeps the mv on
+  # one filesystem, so it is an atomic rename with no truncated window.
+  # `|| true`: grep -Fxv exits 1 when it emits no lines, which is a legitimate
+  # empty result here, not an error.
+  bashrc_tmp="$(mktemp "$HOME/.bashrc.uninstall.XXXXXX")"
+  chmod --reference="$HOME/.bashrc.pre-claude-uninstall" "$bashrc_tmp" 2>/dev/null || true
+  { grep -Fxv "$BASHRC_LINE" "$HOME/.bashrc.pre-claude-uninstall" \
+      | grep -Fxv '# Claude Code workflow wrappers (cc-explore, cc-build, cc-continue)' \
+      > "$bashrc_tmp"; } || true
+  mv "$bashrc_tmp" "$HOME/.bashrc"
   log_ok "removed the cc-functions source line from ~/.bashrc"
   log_info "previous ~/.bashrc saved at ~/.bashrc.pre-claude-uninstall"
 else

@@ -31,6 +31,16 @@ for pkg in "${DOCKER_CE_PKGS[@]}" "${DOCKER_IO_PKGS[@]}"; do
   fi
 done
 
+# containerd is a standalone Ubuntu-archive package other software can
+# legitimately depend on (podman, buildah, nerdctl, some Kubernetes apt
+# packages). Detection is content-based (whatever dpkg -s finds), so it
+# cannot tell "installed for Docker" from "installed for something else".
+# Used below to decide whether to surface a dry-run warning.
+case " ${installed_pkgs[*]-} " in
+  *" containerd "*) containerd_in_plan=1 ;;
+  *)                containerd_in_plan=0 ;;
+esac
+
 ASSUME_YES=0
 case "${1:-}" in
   --yes) ASSUME_YES=1 ;;
@@ -46,6 +56,7 @@ if [ "${#installed_pkgs[@]}" -eq 0 ]; then
   plan "(no Docker packages are installed — nothing to remove)"
 else
   plan "apt packages: ${installed_pkgs[*]}"
+  plan "any packages left orphaned by the above (via apt-get autoremove)"
 fi
 [ -f "$APT_SOURCE" ]  && plan "apt source: $APT_SOURCE"
 [ -f "$APT_KEYRING" ] && plan "keyring: $APT_KEYRING"
@@ -61,6 +72,15 @@ keep "the docker group itself — removing it could orphan other accounts"
 log_warn "Nothing in /var/lib/docker is touched. If you want images and volumes"
 log_warn "gone too, do it deliberately BEFORE running this with --yes:"
 log_warn "  docker system prune -a --volumes"
+
+if [ "$containerd_in_plan" -eq 1 ]; then
+  log_warn "containerd is a standalone package other software may legitimately"
+  log_warn "depend on (podman, buildah, nerdctl, some Kubernetes apt packages)."
+  log_warn "This script only knows it is installed, not why: apt-get remove"
+  log_warn "will pull in its reverse-dependency chain non-interactively. Check"
+  log_warn "before running with --yes:"
+  log_warn "  apt-cache rdepends --installed containerd"
+fi
 
 if [ "$ASSUME_YES" -ne 1 ]; then
   log_warn "Dry run — nothing was removed. Re-run with --yes to proceed."

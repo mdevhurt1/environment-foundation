@@ -30,11 +30,15 @@ Pick the profile that matches your machine:
 
 ## Supported platforms
 
-| Platform | Status |
-|----------|--------|
-| Ubuntu 24.04 LTS | Primary |
-| Ubuntu 22.04 LTS | Supported |
-| Windows 11 (WSL2) | Supported |
+| Platform | Status | What that means |
+|----------|--------|-----------------|
+| Ubuntu 24.04 LTS | Primary | Scripted end to end. `platforms/ubuntu-24.04/scripts/` is the only baseline with executable steps. |
+| Ubuntu 22.04 LTS | Supported | Run the **24.04** baseline scripts, applying the exceptions in [`platforms/ubuntu-22.04/README.md`](platforms/ubuntu-22.04/README.md). There are no 22.04-specific scripts. |
+| Windows 11 (WSL2) | Supported | Development happens inside WSL2 Ubuntu — follow the 24.04 baseline there. Gaming uses Windows-native installers. See [`platforms/windows-11/README.md`](platforms/windows-11/README.md). No scripts. |
+
+Modules note per-platform deviations in their own `platform-notes/<os-version>.md`
+where behavior differs. A module with no note for your platform is expected to
+work as written on the 24.04 path.
 
 ## Adding a new platform or software module
 

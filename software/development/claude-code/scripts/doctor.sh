@@ -1,16 +1,33 @@
 #!/usr/bin/env bash
-# cc-doctor — verify Claude Code SOP install state. Prints OK/WARN/FAIL
-# per check. Exits non-zero if any FAIL.
+# Description: cc-doctor — drift detection for the Claude Code SOP install.
+#              Checks the ~/.claude symlinks against canonical/, that canonical/
+#              carries no secrets or absolute home paths, and that the shell
+#              wrappers are wired up. Prints OK/WARN/FAIL per check and exits
+#              non-zero if any FAIL.
+# Profiles:    workstation, workplace
+# Platforms:   ubuntu-24.04, ubuntu-22.04 (WSL supported)
+# Dependencies: claude installed and configured (install.sh, configure.sh)
+# Idempotent.
 
 set -uo pipefail   # NOT -e: doctor must run all checks even if some fail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
+# shellcheck source=../../../../shared/logging.sh
+# shellcheck disable=SC1091
+source "$REPO_ROOT/shared/logging.sh"
+
+require_not_root
+
 CANONICAL="$REPO_ROOT/software/development/claude-code/canonical"
 CLAUDE_DIR="$HOME/.claude"
 
 OK=0 WARN=0 FAIL=0
 
+# Local reporters, not shared/logging.sh's log_*: these add ANSI colour and
+# maintain the three counters the summary needs. Sourcing the shared library
+# above is additive — log_*, require_command and require_not_root do not
+# collide with ok/warn/fail/heading.
 ok()   { printf '\033[01;32m[OK]\033[00m   %s\n' "$*"; OK=$((OK+1)); }
 warn() { printf '\033[01;33m[WARN]\033[00m %s\n' "$*"; WARN=$((WARN+1)); }
 fail() { printf '\033[01;31m[FAIL]\033[00m %s\n' "$*"; FAIL=$((FAIL+1)); }

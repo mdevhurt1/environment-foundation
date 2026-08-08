@@ -149,15 +149,41 @@ if grep -Fxq "$BASHRC_LINE" "$HOME/.bashrc" 2>/dev/null; then
   # straight into ~/.bashrc: the redirect truncates before the pipeline runs,
   # so a chain that matches nothing (a ~/.bashrc holding only our two managed
   # lines) would leave the real file empty AND abort under pipefail before the
-  # log line naming the backup ever printed. mktemp in $HOME keeps the mv on
-  # one filesystem, so it is an atomic rename with no truncated window.
-  # `|| true`: grep -Fxv exits 1 when it emits no lines, which is a legitimate
-  # empty result here, not an error.
-  bashrc_tmp="$(mktemp "$HOME/.bashrc.uninstall.XXXXXX")"
-  chmod --reference="$HOME/.bashrc.pre-claude-uninstall" "$bashrc_tmp" 2>/dev/null || true
-  { grep -Fxv "$BASHRC_LINE" "$HOME/.bashrc.pre-claude-uninstall" \
-      | grep -Fxv '# Claude Code workflow wrappers (cc-explore, cc-build, cc-continue)' \
-      > "$bashrc_tmp"; } || true
+  # log line naming the backup ever printed. The temp file lives in $HOME so
+  # the mv is a same-filesystem atomic rename with no truncated window. Its
+  # name is fixed rather than random: $HOME is not shared, so there is no
+  # symlink race to defend against, and a fixed name bounds a leak from an
+  # interrupted run at one file forever instead of one per run.
+  bashrc_tmp="$HOME/.bashrc.uninstall.tmp"
+  : > "$bashrc_tmp"
+  # Take the mode from the LIVE ~/.bashrc, not from the backup: cp onto a
+  # pre-existing backup leaves that older file's mode in place, so a stale
+  # backup from an earlier cycle could donate something like 0200 and leave the
+  # new ~/.bashrc unreadable. Nothing has truncated ~/.bashrc at this point, so
+  # it still carries the mode we actually want to preserve.
+  chmod --reference="$HOME/.bashrc" "$bashrc_tmp" 2>/dev/null || true
+  # grep exits 1 when it merely emitted no lines, which is a legitimate empty
+  # result here; 2 or more means a real failure (unreadable input, I/O or write
+  # error). Check EVERY stage via PIPESTATUS, not $?: with pipefail the pipeline
+  # status is the RIGHTMOST non-zero one, so an unreadable backup makes the
+  # first grep exit 2 while the second still exits 1 -- and that 1 wins, hiding
+  # the error completely ($? is 1, PIPESTATUS is "2 1"). PIPESTATUS must also be
+  # copied on the very next line: any other command in between resets it.
+  # Bailing here, before the mv, leaves ~/.bashrc untouched on failure.
+  set +e
+  grep -Fxv "$BASHRC_LINE" "$HOME/.bashrc.pre-claude-uninstall" \
+    | grep -Fxv '# Claude Code workflow wrappers (cc-explore, cc-build, cc-continue)' \
+    > "$bashrc_tmp"
+  filter_status=("${PIPESTATUS[@]}")
+  set -e
+  for status in "${filter_status[@]}"; do
+    if [ "$status" -gt 1 ]; then
+      log_error "filtering ~/.bashrc failed (grep status ${filter_status[*]}) — ~/.bashrc left untouched."
+      log_info "your original is intact at ~/.bashrc.pre-claude-uninstall"
+      log_info "the partial output is at $bashrc_tmp"
+      exit 1
+    fi
+  done
   mv "$bashrc_tmp" "$HOME/.bashrc"
   log_ok "removed the cc-functions source line from ~/.bashrc"
   log_info "previous ~/.bashrc saved at ~/.bashrc.pre-claude-uninstall"

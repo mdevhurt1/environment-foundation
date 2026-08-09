@@ -74,6 +74,9 @@ link "$CANONICAL/shell/cc-functions.sh" "$CLAUDE_DIR/cc-functions.sh"
 link "$CANONICAL/shell/cc-tree-slot-write.sh"  "$CLAUDE_DIR/cc-tree-slot-write.sh"
 link "$CANONICAL/shell/cc-tree-slot-update.sh" "$CLAUDE_DIR/cc-tree-slot-update.sh"
 
+# Ring-maintenance scanner, invoked from the ring-maintenance skill (Phase 1).
+link "$CANONICAL/shell/cc-ring-scan.sh" "$CLAUDE_DIR/cc-ring-scan.sh"
+
 # ---- ~/.bashrc source line (idempotent) ----
 SOURCE_LINE='[ -f ~/.claude/cc-functions.sh ] && source ~/.claude/cc-functions.sh'
 if ! grep -Fxq "$SOURCE_LINE" "$HOME/.bashrc" 2>/dev/null; then

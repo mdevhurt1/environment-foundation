@@ -27,13 +27,31 @@ Run all baseline steps in order:
 - [ ] [Claude Code — configure](../software/development/claude-code/scripts/configure.sh) `[dev]`
 - [ ] [Docker — install](../software/development/docker/scripts/install.sh) `[dev]`
 - [ ] [Docker — configure](../software/development/docker/scripts/configure.sh) `[dev]`
-- [ ] [Plane — configure](../software/development/claude-code/integrations/plane/README.md) `[workstation]`
+- [ ] [Plane — verify](../software/development/claude-code/integrations/plane/README.md) `[workstation]` — read-only check; run after Claude Code configure and `environment-secrets/install.sh`
 
 ### 3. System
 
 - [ ] [Performance Dashboard — install](../software/system/perf-dashboard/scripts/install.sh) `[workstation]` — three-tier glanceable system monitor (Vitals + Conky + Netdata)
 - [ ] [Performance Dashboard — configure](../software/system/perf-dashboard/scripts/configure.sh) `[workstation]`
 
-### 4. Gaming *(skip on workplace or headless machines)*
+### 4. Peripherals
+
+- [ ] [Razer — install](../software/peripherals/razer/scripts/install.sh) `[workstation]` — OpenRazer + Polychromatic; **reboot required** before verifying
+- [ ] [Razer — verify](../software/peripherals/razer/scripts/verify.sh) `[workstation]` — run after the reboot
+- [ ] [Stream Deck — install](../software/peripherals/streamdeck/scripts/install.sh) `[workstation]` — Boatswain + udev rule; **replug the device** afterwards
+- [ ] [Stream Deck — verify](../software/peripherals/streamdeck/scripts/verify.sh) `[workstation]`
+
+### 5. Communications
+
+- [ ] [Signal Desktop — install](../software/communications/signal/scripts/install.sh) `[workstation]`
+- [ ] [Signal Desktop — verify](../software/communications/signal/scripts/verify.sh) `[workstation]`
+
+### 6. Media
+
+- [ ] [OBS Studio — install](../software/media/obs-studio/scripts/install.sh) `[workstation]`
+- [ ] [OBS Studio — verify](../software/media/obs-studio/scripts/verify.sh) `[workstation]`
+
+### 7. Gaming *(skip on workplace or headless machines)*
 
 - [ ] [Steam — install](../software/gaming/steam/scripts/install.sh) `[gaming]`
+- [ ] [Discord — install](../software/gaming/discord/scripts/install.sh) `[gaming]`

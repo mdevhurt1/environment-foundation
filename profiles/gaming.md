@@ -20,8 +20,14 @@ Gaming-focused setup. Assumes the platform baseline is already complete.
 ### 2. Gaming software
 
 - [ ] [Steam — install](../software/gaming/steam/scripts/install.sh) `[gaming]`
+- [ ] [Discord — install](../software/gaming/discord/scripts/install.sh) `[gaming]`
 
-### 3. Post-install
+### 3. Peripherals
+
+- [ ] [Razer — install](../software/peripherals/razer/scripts/install.sh) `[gaming]` — OpenRazer + Polychromatic; **reboot required** before verifying
+- [ ] [Razer — verify](../software/peripherals/razer/scripts/verify.sh) `[gaming]` — run after the reboot
+
+### 4. Post-install
 
 - Enable Steam Play (Proton) for Windows game compatibility:
   **Steam → Settings → Compatibility → Enable Steam Play for all titles**

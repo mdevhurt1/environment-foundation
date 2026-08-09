@@ -34,16 +34,19 @@ exploration mode (be cautious; ask before destructive ops).
 ## Vault
 
 The user's Obsidian vault is at `~/vault/`. **Read freely** for context.
-**Write only** to `~/vault/20-surface/claude-{memory,transcripts,specs,plans}/`
-via the `end-conversation` skill. Never write to:
+**Write only** to `~/vault/20-surface/`.
 
-- `~/vault/00-core/` — human-only inner ring (principles, beliefs)
-- `~/vault/10-middle/` — human-only middle ring (synthesis, decisions)
-- `~/vault/40-journal/` — human-only voice practice
+The rings are two-tier (canonical: `10-middle/areas/company-architecture/
+three-spaces.md`):
 
-These are enforced by sandbox in exploration mode and by skill-level
-instruction in build mode. Both are hard rules; do not propose edits
-to these directories regardless of perceived value.
+- `~/vault/00-core/` and `~/vault/40-journal/` — **human-only. Never write,
+  under any circumstance. No approval path exists.**
+- `~/vault/10-middle/` — the CEO's ring. Agents do not write here *as a
+  matter of course*. The single exception is the `ring-maintenance` skill's
+  Phase 2 promotion walk, which writes one approved note at a time, from the
+  command-center session, after the CEO has read and approved that specific
+  content. Nothing else may write here — do not propose edits regardless of
+  perceived value.
 
 ## Trust mode signals (statusline)
 

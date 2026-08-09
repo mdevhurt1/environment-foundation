@@ -1,76 +1,120 @@
 #!/usr/bin/env bash
-# Description: Reverses install. Interactive — prompts before each destructive op.
+# Description: Removes all three Performance Dashboard tiers — Netdata, Conky and the Vitals extension — plus the configs and autostart entry the module deployed. Dry run by default; --yes to proceed.
 # Profiles:    workstation
 # Platforms:   ubuntu-24.04
 # Dependencies: apt, dconf, gnome-extensions, systemctl
+# Idempotent.
 
-set -uo pipefail
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
-MODULE_ROOT="$(dirname "$SCRIPT_DIR")"
-CANONICAL="$MODULE_ROOT/canonical"
+# shellcheck source=../../../../shared/logging.sh
+# shellcheck disable=SC1091
 source "$REPO_ROOT/shared/logging.sh"
 
 require_not_root
 
-confirm() {
-  local prompt="$1"
-  local ans
-  read -r -p "[uninstall] $prompt [y/N] " ans
-  [[ "$ans" =~ ^[Yy]$ ]]
-}
+VITALS_UUID="Vitals@CoreCoding.com"
 
-uninstall_tier1() {
-  log_info "Tier 1: Vitals"
-  local uuid="Vitals@CoreCoding.com"
-  if confirm "Disable + uninstall Vitals extension and reset its dconf?"; then
-    gnome-extensions disable "$uuid" 2>/dev/null || true
-    gnome-extensions uninstall "$uuid" 2>/dev/null || true
-    dconf reset -f /org/gnome/shell/extensions/vitals/ 2>/dev/null || true
+# power-profiles-daemon ships with the default Ubuntu 24.04 GNOME desktop.
+# install.sh's `apt-get install -y power-profiles-daemon` is a no-op on a
+# stock machine, so this module frequently isn't what put it there — used
+# below to decide whether to surface a dry-run warning.
+ppd_installed=0
+if dpkg -s power-profiles-daemon &>/dev/null; then
+  ppd_installed=1
+fi
+
+ASSUME_YES=0
+case "${1:-}" in
+  --yes) ASSUME_YES=1 ;;
+  "")    ASSUME_YES=0 ;;
+  *)     log_error "Unknown argument: $1 (only --yes is accepted)"; exit 2 ;;
+esac
+
+plan() { printf '  - %s\n' "$*"; }
+keep() { printf '  . %s\n' "$*"; }
+
+log_info "Performance Dashboard uninstall would REMOVE:"
+plan "Tier 3: Netdata, and /etc/netdata, /var/cache/netdata, /var/lib/netdata"
+plan "Tier 2: the running conky process, ~/.config/conky/{perf-dashboard.conkyrc,widgets.lua,conky-helpers.sh}"
+plan "Tier 2: the autostart entry ~/.config/autostart/perf-dashboard-conky.desktop"
+plan "Tier 2: apt packages conky-all, power-profiles-daemon, lm-sensors"
+plan "Tier 1: the $VITALS_UUID extension and its dconf subtree"
+plan "Tier 1: apt package gnome-shell-extension-manager"
+
+log_info "and would deliberately KEEP:"
+keep "the module files in this repository"
+keep "any other conky configs in ~/.config/conky/"
+keep "your GNOME settings outside the vitals dconf subtree"
+
+log_warn "Netdata's historical metrics in /var/cache/netdata are deleted and"
+log_warn "cannot be recovered."
+
+if [ "$ppd_installed" -eq 1 ]; then
+  log_warn "power-profiles-daemon is a stock Ubuntu desktop package (it ships"
+  log_warn "with the default 24.04 GNOME install) that this module's install.sh"
+  log_warn "may not actually have installed — on a stock machine that apt-get"
+  log_warn "install is a no-op. Removing it drops the Balanced/Performance/"
+  log_warn "Power-Saver panel from GNOME Settings. Check before running with"
+  log_warn "--yes:"
+  log_warn "  dpkg -s power-profiles-daemon"
+  log_warn "Reinstate it afterward with:"
+  log_warn "  sudo apt-get install power-profiles-daemon"
+fi
+
+if [ "$ASSUME_YES" -ne 1 ]; then
+  log_warn "Dry run — nothing was removed. Re-run with --yes to proceed."
+  exit 0
+fi
+
+export DEBIAN_FRONTEND=noninteractive
+
+# Reverse order: Tier 3 (heaviest) first, Tier 1 last.
+
+uninstall_tier3() {
+  log_info "Tier 3: Netdata"
+  if [[ -x /usr/libexec/netdata/netdata-uninstaller.sh ]]; then
+    sudo /usr/libexec/netdata/netdata-uninstaller.sh --yes --force || true
+  elif [[ -x /usr/sbin/netdata-uninstaller.sh ]]; then
+    sudo /usr/sbin/netdata-uninstaller.sh --yes --force || true
+  elif command -v dpkg >/dev/null 2>&1 && dpkg -s netdata >/dev/null 2>&1; then
+    sudo -E apt-get remove --purge -y netdata || true
+  else
+    log_warn "Netdata uninstaller not found — nothing to do."
   fi
-  if confirm "Remove gnome-shell-extension-manager apt package?"; then
-    DEBIAN_FRONTEND=noninteractive sudo apt-get remove -y gnome-shell-extension-manager
-  fi
+  sudo rm -rf /etc/netdata /var/cache/netdata /var/lib/netdata || true
+  log_ok "Tier 3 removed."
 }
 
 uninstall_tier2() {
   log_info "Tier 2: Conky"
-  if confirm "Stop Conky and remove user-side configs + autostart?"; then
-    pkill -x conky 2>/dev/null || true
-    rm -f "$HOME/.config/autostart/perf-dashboard-conky.desktop"
-    rm -f "$HOME/.config/conky/perf-dashboard.conkyrc"
-    rm -f "$HOME/.config/conky/widgets.lua"
-    rm -f "$HOME/.config/conky/conky-helpers.sh"
-    rmdir "$HOME/.config/conky" 2>/dev/null || true
-  fi
-  if confirm "Remove apt packages (conky-all, power-profiles-daemon, lm-sensors)?"; then
-    DEBIAN_FRONTEND=noninteractive sudo apt-get remove -y conky-all power-profiles-daemon lm-sensors
-  fi
+  pkill -x conky 2>/dev/null || true
+  rm -f "$HOME/.config/autostart/perf-dashboard-conky.desktop"
+  rm -f "$HOME/.config/conky/perf-dashboard.conkyrc"
+  rm -f "$HOME/.config/conky/widgets.lua"
+  rm -f "$HOME/.config/conky/conky-helpers.sh"
+  # Only succeeds if the directory is empty — other conky configs are kept.
+  rmdir "$HOME/.config/conky" 2>/dev/null || true
+  sudo -E apt-get remove -y conky-all power-profiles-daemon lm-sensors || true
+  log_ok "Tier 2 removed."
 }
 
-uninstall_tier3() {
-  log_info "Tier 3: Netdata"
-  if confirm "Stop and uninstall Netdata? (data in /var/cache/netdata will be lost)"; then
-    if [[ -x /usr/libexec/netdata/netdata-uninstaller.sh ]]; then
-      sudo /usr/libexec/netdata/netdata-uninstaller.sh --yes --force
-    elif [[ -x /usr/sbin/netdata-uninstaller.sh ]]; then
-      sudo /usr/sbin/netdata-uninstaller.sh --yes --force
-    elif command -v dpkg >/dev/null 2>&1 && dpkg -l netdata >/dev/null 2>&1; then
-      sudo apt remove --purge -y netdata
-    else
-      log_warn "Netdata uninstaller not found — remove manually if needed."
-    fi
-    sudo rm -rf /etc/netdata /var/cache/netdata /var/lib/netdata
-  fi
+uninstall_tier1() {
+  log_info "Tier 1: Vitals"
+  gnome-extensions disable "$VITALS_UUID" 2>/dev/null || true
+  gnome-extensions uninstall "$VITALS_UUID" 2>/dev/null || true
+  dconf reset -f /org/gnome/shell/extensions/vitals/ 2>/dev/null || true
+  sudo -E apt-get remove -y gnome-shell-extension-manager || true
+  log_ok "Tier 1 removed."
 }
 
 main() {
-  # Reverse order: Tier 3 (heaviest) first, Tier 1 last.
   uninstall_tier3
   uninstall_tier2
   uninstall_tier1
   log_ok "Uninstall complete. Module files in the repo are untouched."
 }
 
-main "$@"
+main

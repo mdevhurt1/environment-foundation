@@ -44,8 +44,10 @@ work as written on the 24.04 path.
 
 - New **platforms** go in `platforms/<os-version>/` following the structure
   of `platforms/ubuntu-24.04/`.
-- New **software modules** go in `software/<category>/<name>/` following the
-  structure of any existing module.
+- New **software modules** go in `software/<category>/<name>/` and must satisfy
+  the [module contract](docs/module-contract.md): a `README.md` plus
+  `scripts/install.sh`, `scripts/verify.sh` and `scripts/uninstall.sh`.
+  Check your work with `bash scripts/doctor.sh`.
 - New **categories** go at the same level as `development/` and `gaming/`
   inside `software/` when the boundary is clear.
 

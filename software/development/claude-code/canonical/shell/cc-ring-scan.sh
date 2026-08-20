@@ -144,7 +144,14 @@ while IFS= read -r t; do
 
     [ -n "${RUNNING_TASKS[$tid]:-}" ] && continue
 
-    newest=$(find "$t" -type f -printf '%T@\n' 2>/dev/null | sort -rn | head -1)
+    # awk max, not `sort -rn | head -1`: head reads one ~8 KiB block, prints
+    # line 1 and exits, so sort's next write hits a closed pipe and dies of
+    # SIGPIPE (141) — which pipefail promotes to the pipeline's status and
+    # errexit turns into a silent abort with no output at all. Measured to
+    # fire from ~400 files in a folder, reliably by ~600. awk reads to EOF,
+    # so nothing is ever killed mid-write.
+    newest=$(find "$t" -type f -printf '%T@\n' 2>/dev/null \
+             | awk 'NR==1 || $1+0 > m+0 { m=$1 } END { if (NR) print m }')
     if [ -z "$newest" ]; then
         anom "$t" "task folder contains no files"
         continue
@@ -260,11 +267,20 @@ lev_near() {
     }
     BEGIN { best = 99; bestn = "" }
     {
-        if (tolower($0) == tolower(t)) { print $0 "\t0"; found = 1; exit }
+        # Never exit early here: this awk drains a printf that emits every
+        # note name in the vault, and exiting first would SIGPIPE it (141)
+        # under pipefail — the same failure the task loop above had. The awk
+        # read buffer puts that threshold near 300 KB and the vault is at
+        # ~50 KB today, so this is prevention, not a live bug. Note: no
+        # apostrophes in here — this comment lives inside a single-quoted awk
+        # program. `next` still skips the expensive lev() call, which is all
+        # the old `exit` bought.
+        if (found) next
+        if (tolower($0) == tolower(t)) { found = 1; bestn = $0; best = 0; next }
         d = lev(tolower($0), tolower(t))
         if (d < best) { best = d; bestn = $0 }
     }
-    END { if (!found && best <= 2) print bestn "\t" best }
+    END { if (found) print bestn "\t0"; else if (best <= 2) print bestn "\t" best }
     '
 }
 

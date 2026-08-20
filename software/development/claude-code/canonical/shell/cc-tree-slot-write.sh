@@ -7,7 +7,9 @@
 # plus an adjacent .events/ directory for append-only events.
 #
 # If .cc-mode declares a parent_id and that parent has an events directory,
-# a `spawned` event is appended there.
+# a `spawned` event is appended there -- once. Re-running (e.g. /start used to
+# re-orient mid-session) will not append a second spawned event for the same
+# child, which would otherwise show the parent one child spawning twice.
 #
 # Which .cc-mode is used, highest precedence first:
 #   1. --mode-file <path>   an explicitly named .cc-mode
@@ -144,6 +146,19 @@ task_id="$slug"
 
 slot="$HOME/vault/20-surface/company/tree/sessions/${session_id}.md"
 
+# Rewriting an existing slot resets it to status=running. That is right for a
+# genuinely resumed session, but it also silently reopens a session that had
+# already closed -- which reads to the parent as a finished lane going live
+# again. Don't change the semantics here (resume is cc-continue's call), but
+# don't let it happen quietly either.
+if [ -f "$slot" ]; then
+    prev_status=$( { grep -m1 '^status:' "$slot" || true; } | sed 's/^status:[[:space:]]*//')
+    if [ "$prev_status" = "completed" ]; then
+        echo "WARN: slot $session_id already exists with status=completed;" >&2
+        echo "      rewriting it resets the session to running." >&2
+    fi
+fi
+
 mkdir -p "$(dirname "$slot")"
 mkdir -p "${slot%.md}.events"
 
@@ -184,8 +199,24 @@ echo "tree slot: $slot"
 if [ -n "$parent_id" ]; then
     parent_events="$HOME/vault/20-surface/company/tree/sessions/${parent_id}.events"
     if [ -d "$parent_events" ]; then
-        next=$(printf "%04d" $(( $(find "$parent_events" -name '*.md' 2>/dev/null | wc -l) + 1 )))
-        cat > "$parent_events/${next}-spawned.md" <<EOF
+        # Idempotency guard: dedupe on (child session_id, verb=spawned). This
+        # script is re-run whenever session-start runs again (/start re-orients
+        # mid-session); without this the parent sees the child spawn twice.
+        existing=""
+        for e in "$parent_events"/[0-9]*-*.md; do
+            [ -f "$e" ] || continue
+            if grep -q '^verb: spawned$' "$e" \
+               && grep -qxF "# Child session spawned: $session_id" "$e"; then
+                existing="$e"
+                break
+            fi
+        done
+
+        if [ -n "$existing" ]; then
+            echo "spawned event: already recorded at $existing — not appending a duplicate"
+        else
+            next=$(printf "%04d" $(( $(find "$parent_events" -name '*.md' 2>/dev/null | wc -l) + 1 )))
+            cat > "$parent_events/${next}-spawned.md" <<EOF
 ---
 event_id: $next
 session_id: $parent_id
@@ -198,6 +229,7 @@ severity: info
 
 slug=$slug mode=$mode
 EOF
-        echo "spawned event: $parent_events/${next}-spawned.md"
+            echo "spawned event: $parent_events/${next}-spawned.md"
+        fi
     fi
 fi

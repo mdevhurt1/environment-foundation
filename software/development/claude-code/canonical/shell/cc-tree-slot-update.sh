@@ -17,7 +17,11 @@
 # an explicit id and a .cc-mode are both available they must agree; a mismatch
 # is refused before anything is written. See
 # ~/vault/20-surface/claude-memory/feedback_tree_slot_helpers_resolve_from_cwd.md
-
+#
+# The parent-event append is idempotent: a second run for a child that already
+# has a completion event logs nothing rather than double-reporting it. The
+# failure direction is deliberate -- a missing duplicate costs nothing, while a
+# double-count misleads the parent's status pass.
 #
 # No-op (exit 0 with a WARN) if no identity can be resolved, or the slot file
 # was never written (older sessions, bare launches). Exits non-zero only on a
@@ -175,8 +179,24 @@ echo "tree slot updated: $slot"
 if [ -n "$parent_id" ]; then
     parent_events="$HOME/vault/20-surface/company/tree/sessions/${parent_id}.events"
     if [ -d "$parent_events" ]; then
-        next=$(printf "%04d" $(( $(find "$parent_events" -name '*.md' 2>/dev/null | wc -l) + 1 )))
-        cat > "$parent_events/${next}-completion.md" <<EOF
+        # Idempotency guard: dedupe on (child session_id, verb=completion). A
+        # completion already on the record means this child has been reported;
+        # appending again would show the parent one child completing twice.
+        existing=""
+        for e in "$parent_events"/[0-9]*-*.md; do
+            [ -f "$e" ] || continue
+            if grep -q '^verb: completion$' "$e" \
+               && grep -qxF "# Child session completed: $session_id" "$e"; then
+                existing="$e"
+                break
+            fi
+        done
+
+        if [ -n "$existing" ]; then
+            echo "completion event: already recorded at $existing — not appending a duplicate"
+        else
+            next=$(printf "%04d" $(( $(find "$parent_events" -name '*.md' 2>/dev/null | wc -l) + 1 )))
+            cat > "$parent_events/${next}-completion.md" <<EOF
 ---
 event_id: $next
 session_id: $parent_id
@@ -190,6 +210,7 @@ severity: normal
 The child session reported normal completion via /end.
 See its slot at \`$HOME/vault/20-surface/company/tree/sessions/${session_id}.md\`.
 EOF
-        echo "completion event: $parent_events/${next}-completion.md"
+            echo "completion event: $parent_events/${next}-completion.md"
+        fi
     fi
 fi

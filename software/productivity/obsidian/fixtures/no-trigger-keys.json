@@ -1,0 +1,5 @@
+{
+  "_fixture": "UNREADABLE STATE — valid JSON from some other or much older plugin version, carrying none of the six trigger settings. The checker cannot see the state it exists to judge, so it must fail rather than report a green nothing. verify.sh MUST fail on this file.",
+  "isConfigured": true,
+  "someUnrelatedSetting": true
+}

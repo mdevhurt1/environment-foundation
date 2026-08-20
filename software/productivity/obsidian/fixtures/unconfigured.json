@@ -1,0 +1,12 @@
+{
+  "_fixture": "NOT CONFIGURED — the plugin is installed and has written defaults, but no remote was ever set up. Triggers are off too, so this exercises the isConfigured failure alongside the freeze failure. verify.sh MUST fail on this file.",
+  "isConfigured": false,
+  "liveSync": false,
+  "periodicReplication": false,
+  "syncOnSave": false,
+  "syncOnStart": false,
+  "syncOnFileOpen": false,
+  "syncOnEditorSave": false,
+  "suspendFileWatching": false,
+  "suspendParseReplicationResult": false
+}

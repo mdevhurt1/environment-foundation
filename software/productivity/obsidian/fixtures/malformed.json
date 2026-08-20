@@ -1,0 +1,4 @@
+{
+  "_fixture": "MALFORMED — data.json exists but is not valid JSON (truncated mid-write, or a botched sync). The plugin falls back to defaults and replicates nothing. verify.sh MUST fail on this file.",
+  "isConfigured": true,
+  "liveSync": true,

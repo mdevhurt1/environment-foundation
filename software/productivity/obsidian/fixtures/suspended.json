@@ -1,0 +1,14 @@
+{
+  "_fixture": "SUSPENDED — the second freeze route. liveSync reads true, so a check that only tested the triggers would call this healthy, but file watching is suspended and nothing replicates. verify.sh MUST fail on this file.",
+  "isConfigured": true,
+  "liveSync": true,
+  "periodicReplication": true,
+  "syncOnSave": true,
+  "syncOnStart": true,
+  "syncOnFileOpen": false,
+  "syncOnEditorSave": false,
+  "suspendFileWatching": true,
+  "suspendParseReplicationResult": false,
+  "disableMarkdownAutoMerge": true,
+  "writeDocumentsIfConflicted": true
+}

@@ -52,6 +52,7 @@ check_symlink "$CLAUDE_DIR/settings.json"         "$CANONICAL/settings.json"
 check_symlink "$CLAUDE_DIR/statusline-command.sh" "$CANONICAL/statusline-command.sh"
 check_symlink "$CLAUDE_DIR/skills"                "$CANONICAL/skills"
 check_symlink "$CLAUDE_DIR/cc-functions.sh"       "$CANONICAL/shell/cc-functions.sh"
+check_symlink "$CLAUDE_DIR/model-policy.json"     "$CANONICAL/model-policy.json"
 
 # ---- 2. canonical/ contains no secrets, no /home/<user>/ paths ----
 heading "Canonical safety"
@@ -249,6 +250,112 @@ if [ -n "$sigpipe_hits" ]; then
     printf '            sort|head), or mark the line # sigpipe-ok if bounded\n'
 else
     ok "no early-exit pipe consumers in pipefail scripts under canonical/"
+fi
+
+# ---- 10. Model policy ----
+heading "Model policy"
+# Claude Code's "Default" is a MOVING REFERENT: it resolves to the most capable
+# model on the account, so a newly-released model captures every unpinned
+# session with no diff, no event and no line of output. On 2026-08-20 that
+# moved the EA session Opus 5 -> Fable 5 unnoticed; it had already moved
+# Opus 4.8 -> Opus 5 before that. The point of the policy file is not to ban
+# Default -- "track-latest" is a legal, deliberate value -- but to make the
+# choice exist somewhere a human signed off on.
+POLICY="$CANONICAL/model-policy.json"
+
+# -- 10a. canonical/settings.json must carry nothing model-related ----------
+# ~/.claude/settings.json is a SYMLINK INTO THIS REPO, so anything the running
+# app writes back lands in a version-controlled file as a diff that reads like
+# a human edit and is not one. `model` has been observed drifting in as both
+# "opus" and "claude-fable-5[1m]"; commit 7057e79 removed those pins by hand
+# and later merges are annotated "settings.json kept from main". That is a
+# convention being defended manually, over and over -- which is the definition
+# of one that needs a mechanism instead.
+settings_json="$CANONICAL/settings.json"
+if [ ! -f "$settings_json" ]; then
+    fail "canonical/settings.json missing"
+else
+    model_keys=$(jq -r '[paths(scalars) as $p | $p | join(".")]
+                         | map(select(test("(^|\\.)(model|availableModels|enforceAvailableModels|fallbackModel)($|\\.)")))
+                         | .[]' "$settings_json" 2>/dev/null)
+    if [ -n "$model_keys" ]; then
+        fail "canonical/settings.json carries model-related key(s) - phantom-diff trap"
+        printf '       %s\n' $model_keys
+        printf '       these are machine/session-local: move them to ~/.claude/settings.local.json\n'
+        printf '       (the ROLE->model mapping is portable intent and belongs in model-policy.json)\n'
+    else
+        ok "canonical/settings.json carries no model-related keys"
+    fi
+fi
+
+# -- 10b. the policy artifact itself ---------------------------------------
+# FAIL, not WARN: a policy that cannot be read is indistinguishable from no
+# policy at all, which is exactly the pre-work state this check exists to end.
+# The wrappers refuse to launch in the same situation (__cc_resolve_model).
+policy_ok=0
+if [ ! -f "$POLICY" ]; then
+    fail "model-policy.json missing at $POLICY"
+elif ! jq -e . "$POLICY" >/dev/null 2>&1; then
+    fail "model-policy.json is not valid JSON"
+elif ! jq -e '.policy_version | numbers' "$POLICY" >/dev/null 2>&1; then
+    fail "model-policy.json has no numeric policy_version"
+elif ! jq -e '.roles | objects | length > 0' "$POLICY" >/dev/null 2>&1; then
+    fail "model-policy.json has no roles object"
+else
+    # Value grammar. THE authoritative implementation -- cc-functions.sh
+    # deliberately does not duplicate it (one implementation, everything else
+    # delegates). Legal: track-latest | tier alias | exact claude-* id.
+    bad_roles=$(jq -r '
+        .roles | to_entries[]
+        | select((.value.model // "") |
+                 test("^(track-latest|opus|sonnet|fable|haiku|claude-[A-Za-z0-9._-]+(\\[1m\\])?)$") | not)
+        | "\(.key)=\(.value.model // "<missing>")"' "$POLICY" 2>/dev/null)
+    if [ -n "$bad_roles" ]; then
+        fail "model-policy.json has role value(s) outside the legal grammar"
+        printf '       %s\n' $bad_roles
+        printf '       legal: "track-latest" | opus|sonnet|fable|haiku | claude-<id>[1m]\n'
+    else
+        n_roles=$(jq -r '.roles | length' "$POLICY")
+        n_pinned=$(jq -r '[.roles[] | select(.model != "track-latest")] | length' "$POLICY")
+        ok "model-policy.json valid (v$(jq -r .policy_version "$POLICY"), $n_roles roles, $n_pinned pinned)"
+        policy_ok=1
+    fi
+fi
+
+# -- 10c. account model roster vs the acknowledged baseline ----------------
+# This is the change-detection half. WARN, never FAIL: a new model on the
+# account is not an error, it is an ITEM REQUIRING A DECISION. The warning
+# persists on every run until a human edits known_models in a tracked file --
+# and making that edit IS the decision, so there is no separate approval
+# artifact to forget about.
+if [ "$policy_ok" -eq 1 ]; then
+    roster_file="$HOME/.claude.json"
+    if [ ! -r "$roster_file" ]; then
+        warn "cannot read the account config - model roster change detection unavailable"
+    else
+        roster=$(jq -r '(.additionalModelOptionsCache // []) | .[].value' "$roster_file" 2>/dev/null)
+        if [ -z "$roster" ]; then
+            ok "account model roster is empty (nothing to acknowledge)"
+        else
+            unknown=""
+            while IFS= read -r m; do
+                [ -z "$m" ] && continue
+                if ! jq -e --arg m "$m" '(.known_models // []) | index($m)' "$POLICY" >/dev/null 2>&1; then
+                    unknown="$unknown $m"
+                fi
+            done <<< "$roster"
+            if [ -n "$unknown" ]; then
+                warn "new model(s) in the account roster not acknowledged by model-policy.json:"
+                printf '       %s\n' $unknown
+                printf '       Default may have silently moved. Decide, then record the decision:\n'
+                printf '         - pin the affected roles in model-policy.json, or\n'
+                printf '         - add the model to known_models to record that track-latest still applies\n'
+                printf '       cost of the tier at stake: check /cost and the account usage page\n'
+            else
+                ok "account model roster fully acknowledged in known_models"
+            fi
+        fi
+    fi
 fi
 
 # ---- summary ----

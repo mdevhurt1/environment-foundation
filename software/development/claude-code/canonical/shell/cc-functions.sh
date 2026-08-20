@@ -58,6 +58,104 @@ __cc_mint_session_id() {
     fi
 }
 
+# ---- model policy ----
+# Locate the role->model policy file. Three routes, in order:
+#   1. $CC_MODEL_POLICY             explicit override (tests, one-off runs)
+#   2. ~/.claude/model-policy.json  the configure.sh symlink (steady state)
+#   3. the repo copy sitting beside the live cc-functions.sh symlink
+# Route 3 exists because this file is live via symlink for every running
+# session: a session must be able to find the policy before configure.sh has
+# been re-run to add the new link, or launches start refusing mid-flight.
+__cc_model_policy_path() {
+    if [ -n "${CC_MODEL_POLICY:-}" ]; then
+        [ -f "$CC_MODEL_POLICY" ] || return 1
+        printf '%s\n' "$CC_MODEL_POLICY"
+        return 0
+    fi
+    if [ -f "$HOME/.claude/model-policy.json" ]; then
+        printf '%s\n' "$HOME/.claude/model-policy.json"
+        return 0
+    fi
+    local ccf cand
+    ccf=$(readlink -f "$HOME/.claude/cc-functions.sh" 2>/dev/null) || return 1
+    case "$ccf" in
+        */shell/cc-functions.sh)
+            cand="${ccf%/shell/cc-functions.sh}/model-policy.json"
+            if [ -f "$cand" ]; then printf '%s\n' "$cand"; return 0; fi
+            ;;
+    esac
+    return 1
+}
+
+# __cc_resolve_model <role> -- prints "<model>\t<source>" on stdout.
+# Order: $CC_MODEL (env) > policy roles.<role>.model > refuse.
+#
+# Refusing rather than falling back to Default is deliberate. Claude Code's
+# "Default" is a MOVING REFERENT: it resolves to the most capable model on the
+# account, so a newly-released model captures every unpinned session with no
+# diff, no event and no line of output. That is how the EA session silently
+# moved Opus 5 -> Fable 5. A refusal costs one command and is loud; the silent
+# version was discovered by a bill. CC_MODEL=<value> is the escape hatch and is
+# named in the refusal message itself, so a broken policy strands nobody.
+#
+# The value GRAMMAR is validated by scripts/doctor.sh check 10b, not here --
+# one implementation, and the linter is its right home. This resolver refuses
+# only on a missing policy, an absent role, or an empty value.
+__cc_resolve_model() {
+    local role="$1" policy model
+    if [ -n "${CC_MODEL:-}" ]; then
+        printf '%s\t%s\n' "$CC_MODEL" "env"
+        return 0
+    fi
+    if ! command -v jq >/dev/null 2>&1; then
+        __cc_die "jq is required to read the model policy"
+        __cc_log "  fix: install jq, or launch once with: CC_MODEL=track-latest <command>"
+        return 1
+    fi
+    if ! policy=$(__cc_model_policy_path); then
+        __cc_die "no model policy found for role '$role'"
+        __cc_log "  looked at: \$CC_MODEL_POLICY, ~/.claude/model-policy.json, and the"
+        __cc_log "             repo copy beside ~/.claude/cc-functions.sh"
+        __cc_log "  fix: run the claude-code module's configure.sh"
+        __cc_log "  or launch once with: CC_MODEL=track-latest <command>"
+        return 1
+    fi
+    model=$(jq -r --arg r "$role" '.roles[$r].model // empty' "$policy" 2>/dev/null)
+    if [ -z "$model" ]; then
+        __cc_die "model policy has no model for role '$role': $policy"
+        __cc_log "  fix: add a roles.$role entry to the policy"
+        __cc_log "  or launch once with: CC_MODEL=track-latest <command>"
+        return 1
+    fi
+    printf '%s\t%s\n' "$model" "policy:$role"
+}
+
+# __cc_model_prepare <role> -- resolve the role and stage the launch.
+# Sets, in the CALLER's scope: __cc_model_value, __cc_model_source, and the
+# array __cc_model_args (empty for track-latest, else: --model <value>).
+# Callers must declare all three `local` first. Returns 1 on refusal.
+__cc_model_prepare() {
+    local role="$1" spec
+    spec=$(__cc_resolve_model "$role") || return 1
+    __cc_model_value=${spec%%$'\t'*}
+    __cc_model_source=${spec##*$'\t'}
+    if [ "$__cc_model_value" = "track-latest" ]; then
+        __cc_model_args=()
+        __cc_log "model: track-latest (source=$__cc_model_source) - no --model passed; Default may move"
+    else
+        __cc_model_args=(--model "$__cc_model_value")
+        __cc_log "model: $__cc_model_value (source=$__cc_model_source)"
+    fi
+}
+
+# Render __cc_model_args as a shell-quoted fragment for the tmux command
+# STRING used by cc / cc-branch (tmux takes a string, not an argv array).
+# Prints the empty string for track-latest.
+__cc_model_flag_str() {
+    [ "${#__cc_model_args[@]}" -gt 0 ] || return 0
+    printf ' %q' "${__cc_model_args[@]}"
+}
+
 # ---- company tmux helpers ----
 __cc_company_tmux_session() {
     # Single point of truth for the company tmux session name.
@@ -85,12 +183,18 @@ __cc_company_tmux_ensure() {
 
 __cc_write_mode_file() {
     # $1 = directory, $2 = mode, $3 = slug, $4 = parent_repo,
-    # $5 = session_id, $6 = parent_id (may be empty for top-level launches)
+    # $5 = session_id, $6 = parent_id (may be empty for top-level launches),
+    # $7 = model (resolved value: track-latest | tier alias | exact id),
+    # $8 = model_source (env | policy:<role>)
     # Scrub newlines and '=' from session_id/parent_id at the write boundary
-    # so a malformed CC_PARENT_ID cannot inject extra .cc-mode keys.
-    local _sid _pid
+    # so a malformed CC_PARENT_ID cannot inject extra .cc-mode keys. model and
+    # model_source are scrubbed of whitespace as well: the statusline SOURCES
+    # this file, so a value containing a space would break its shell parse.
+    local _sid _pid _model _msrc
     _sid=$(printf '%s' "$5" | tr -d '\n=')
     _pid=$(printf '%s' "${6:-}" | tr -d '\n=')
+    _model=$(printf '%s' "${7:-}" | tr -d "\n= \t")
+    _msrc=$(printf '%s' "${8:-}" | tr -d "\n= \t")
     cat > "$1/.cc-mode" <<EOF
 mode=$2
 slug=$3
@@ -98,6 +202,8 @@ started_at=$(date -Iseconds)
 parent_repo=$4
 session_id=$_sid
 parent_id=$_pid
+model=$_model
+model_source=$_msrc
 EOF
 }
 
@@ -165,6 +271,15 @@ cc-explore() {
     worktree="../${repo_name}-explore-${slug}"
     branch="explore/${slug}"
 
+    # Resolve the model BEFORE creating the worktree. __cc_model_prepare can
+    # refuse (missing/unreadable policy), and a refusal after `git worktree add`
+    # would leave a stray worktree and branch behind -- the same half-spawn
+    # shape the snapshot guard above exists to prevent. Abort before side
+    # effects, always.
+    local __cc_model_value __cc_model_source
+    local -a __cc_model_args
+    __cc_model_prepare explore || return 1
+
     if [ -d "$worktree" ]; then
         __cc_log "worktree already exists at $worktree — reusing"
     else
@@ -178,12 +293,20 @@ cc-explore() {
 
     local session_id
     session_id=$(__cc_mint_session_id)
-    __cc_write_mode_file "$worktree" exploration "$slug" "$repo_root" "$session_id" "${CC_PARENT_ID:-}"
+
+    __cc_write_mode_file "$worktree" exploration "$slug" "$repo_root" "$session_id" "${CC_PARENT_ID:-}" \
+        "$__cc_model_value" "$__cc_model_source"
     __cc_write_sandbox_settings "$worktree"
 
     __cc_log "EXPLORE mode: sandboxed (--settings), branch=$branch, worktree=$worktree"
     cd "$worktree" || return 1
-    claude --settings "$worktree/.cc-sandbox-settings.json"
+    # CC_SESSION_ID is a per-command PREFIX, never an export. The tree-slot
+    # helpers treat it as an ASSERTION and refuse (exit 3) when it disagrees
+    # with the resolved .cc-mode, so a value that outlived this launch would
+    # turn the NEXT session's /start into a hard failure. Same reason the
+    # ANTHROPIC_MODEL/tmux-setenv route was rejected: env state that survives
+    # the process leaks into every later spawn.
+    CC_SESSION_ID="$session_id" claude "${__cc_model_args[@]}" --settings "$worktree/.cc-sandbox-settings.json"
 }
 
 # ---- cc-build ----
@@ -223,9 +346,21 @@ cc-build() {
 
     local session_id
     session_id=$(__cc_mint_session_id)
-    __cc_write_mode_file "$repo_root" build "${repo_name}" "$repo_root" "$session_id" "${CC_PARENT_ID:-}"
+
+    local __cc_model_value __cc_model_source
+    local -a __cc_model_args
+    __cc_model_prepare build || return 1
+
+    __cc_write_mode_file "$repo_root" build "${repo_name}" "$repo_root" "$session_id" "${CC_PARENT_ID:-}" \
+        "$__cc_model_value" "$__cc_model_source"
     __cc_log "BUILD mode: full perms, no prompts"
-    claude --dangerously-skip-permissions
+    # CC_SESSION_ID is a per-command PREFIX, never an export. The tree-slot
+    # helpers treat it as an ASSERTION and refuse (exit 3) when it disagrees
+    # with the resolved .cc-mode, so a value that outlived this launch would
+    # turn the NEXT session's /start into a hard failure. Same reason the
+    # ANTHROPIC_MODEL/tmux-setenv route was rejected: env state that survives
+    # the process leaks into every later spawn.
+    CC_SESSION_ID="$session_id" claude "${__cc_model_args[@]}" --dangerously-skip-permissions
 }
 
 # ---- cc-continue ----
@@ -254,15 +389,46 @@ cc-continue() {
 
     # Parse .cc-mode into local vars — do NOT export; exporting leaks into the
     # caller's interactive shell and poisons the next claude invocation.
-    local mode="" slug="" started_at="" parent_repo=""
+    local mode="" slug="" started_at="" parent_repo="" session_id="" model="" model_source=""
     while IFS='=' read -r key val; do
         case "$key" in
-            mode)        mode="$val" ;;
-            slug)        slug="$val" ;;
-            started_at)  started_at="$val" ;;
-            parent_repo) parent_repo="$val" ;;
+            mode)         mode="$val" ;;
+            slug)         slug="$val" ;;
+            started_at)   started_at="$val" ;;
+            parent_repo)  parent_repo="$val" ;;
+            session_id)   session_id="$val" ;;
+            model)        model="$val" ;;
+            model_source) model_source="$val" ;;
         esac
     done <<< "$mode_data"
+
+    # Resume on the model this session was LAUNCHED with, not on whatever the
+    # policy says today: the session's context was built by that model, and a
+    # policy edit between launch and resume must not silently switch it. A
+    # .cc-mode written before the model stamp existed carries no model= line;
+    # fall back to this mode's policy role rather than to bare Default.
+    local __cc_model_value __cc_model_source
+    local -a __cc_model_args
+    if [ -n "$model" ]; then
+        __cc_model_value="$model"
+        __cc_model_source="${model_source:-cc-mode}"
+        if [ "$model" = "track-latest" ]; then
+            __cc_model_args=()
+        else
+            __cc_model_args=(--model "$model")
+        fi
+        __cc_log "model: $__cc_model_value (source=$__cc_model_source, from .cc-mode)"
+    else
+        local __cc_role
+        case "${mode:-}" in
+            exploration) __cc_role=explore ;;
+            build)       __cc_role=build ;;
+            branched)    __cc_role=branched-worker ;;
+            *)           __cc_role=explore ;;
+        esac
+        __cc_log "no model stamp in .cc-mode (pre-policy session); resolving role $__cc_role"
+        __cc_model_prepare "$__cc_role" || return 1
+    fi
 
     case "${mode:-}" in
         exploration)
@@ -271,12 +437,12 @@ cc-continue() {
             local sandbox_settings
             if sandbox_settings=$(__cc_find_sandbox_settings); then
                 __cc_log "sandbox settings: $sandbox_settings"
-                claude --continue --settings "$sandbox_settings"
+                CC_SESSION_ID="$session_id" claude "${__cc_model_args[@]}" --continue --settings "$sandbox_settings"
             else
                 # Settings file missing (e.g. deleted manually); recreate in cwd.
                 __cc_write_sandbox_settings "$(pwd)"
                 __cc_log "sandbox settings recreated at $(pwd)/.cc-sandbox-settings.json"
-                claude --continue --settings "$(pwd)/.cc-sandbox-settings.json"
+                CC_SESSION_ID="$session_id" claude "${__cc_model_args[@]}" --continue --settings "$(pwd)/.cc-sandbox-settings.json"
             fi
             ;;
         build)
@@ -291,7 +457,7 @@ cc-continue() {
                 *) __cc_die "cc-continue cancelled"; return 1 ;;
             esac
             __cc_log "CONTINUE (was BUILD)"
-            claude --dangerously-skip-permissions --continue
+            CC_SESSION_ID="$session_id" claude "${__cc_model_args[@]}" --dangerously-skip-permissions --continue
             ;;
         *)
             __cc_die "unknown mode in .cc-mode: ${mode:-<empty>}"
@@ -340,14 +506,31 @@ cc() {
     # then attach. The first window (named "cc") runs claude in the CC workspace.
     local session_id
     session_id=$(__cc_mint_session_id)
-    __cc_write_mode_file "$cc_workspace" command-center cc "$cc_workspace" "$session_id" ""
 
-    __cc_log "COMMAND CENTER: session_id=$session_id"
+    # The EA session picks its model up HERE, from policy role "ea" -- this is
+    # the launch that silently landed on Fable 5 when nothing pinned a model.
+    local __cc_model_value __cc_model_source
+    local -a __cc_model_args
+    __cc_model_prepare ea || return 1
+
+    __cc_write_mode_file "$cc_workspace" command-center cc "$cc_workspace" "$session_id" "" \
+        "$__cc_model_value" "$__cc_model_source"
+
+    __cc_log "COMMAND CENTER: session_id=$session_id model=$__cc_model_value ($__cc_model_source)"
 
     # Create tmux session with first window in the CC workspace running claude.
     # The EA orchestrates from a trusted workspace and would prompt-thrash
     # without --dangerously-skip-permissions.
-    tmux new-session -d -s "$tmux_name" -n "cc" -c "$cc_workspace" "claude --dangerously-skip-permissions"
+    #
+    # tmux takes a command STRING, so the model flag is rendered with %q rather
+    # than passed as an argv array. CC_SESSION_ID goes in as a per-command
+    # prefix inside that string -- NOT via `tmux new-session -e`, which would
+    # put it in the tmux session environment and leak it into every window
+    # created later, including every cc-branch child.
+    local model_flag
+    model_flag=$(__cc_model_flag_str)
+    tmux new-session -d -s "$tmux_name" -n "cc" -c "$cc_workspace" \
+        "CC_SESSION_ID=$(printf '%q' "$session_id") claude${model_flag} --dangerously-skip-permissions"
     tmux attach-session -t "$tmux_name"
 }
 
@@ -402,6 +585,17 @@ cc-branch() {
         }
     fi
 
+    # Resolve the model BEFORE anything is created. A refusal here must leave
+    # no worktree, no branch and no tmux window behind -- cc-branch has no
+    # `set -e`, and a half-spawn is exactly the failure mode the __cc_* rename
+    # and the snapshot guards were introduced to kill. Role "branched-worker";
+    # override one spawn with:  CC_MODEL=opus cc-branch <task-id> [<repo-path>]
+    # which lands in the child's .cc-mode as model_source=env, so an override
+    # is as visible in the tree as a policy choice is.
+    local __cc_model_value __cc_model_source
+    local -a __cc_model_args
+    __cc_model_prepare branched-worker || return 1
+
     # Parent identity comes from the caller's nearest .cc-mode (the calling
     # session's). For the EA this returns its own session_id. CC_PARENT_ID is an
     # explicit override for callers that have no .cc-mode above cwd.
@@ -453,7 +647,9 @@ cc-branch() {
     # worktree so the child's session-start reads it via cc-tree-slot-write.sh.
     local child_session_id
     child_session_id=$(__cc_mint_session_id)
-    __cc_write_mode_file "$worktree" branched "$task_id" "$repo_root" "$child_session_id" "$parent_session_id"
+
+    __cc_write_mode_file "$worktree" branched "$task_id" "$repo_root" "$child_session_id" "$parent_session_id" \
+        "$__cc_model_value" "$__cc_model_source"
 
     __cc_company_tmux_ensure
 
@@ -469,11 +665,20 @@ cc-branch() {
 
     __cc_log "cc-branch: task=$task_id parent=$parent_session_id child=$child_session_id"
     __cc_log "          worktree=$worktree"
+    __cc_log "          model=$__cc_model_value ($__cc_model_source)"
 
     # Branched sessions run with --dangerously-skip-permissions to match the
     # EA: orchestration is impractical when every tool call prompts. Identity
     # travels via the worktree's .cc-mode.
-    tmux new-window -d -t "$tmux_name" -n "$window_name" -c "$worktree" "claude --dangerously-skip-permissions"
+    #
+    # CC_SESSION_ID carries the CHILD's id (not the parent's) and is a
+    # per-command prefix inside the tmux command string -- never `new-window
+    # -e`, which would write it into the tmux session environment where the
+    # next window would inherit a stale id and be refused exit 3.
+    local model_flag
+    model_flag=$(__cc_model_flag_str)
+    tmux new-window -d -t "$tmux_name" -n "$window_name" -c "$worktree" \
+        "CC_SESSION_ID=$(printf '%q' "$child_session_id") claude${model_flag} --dangerously-skip-permissions"
 
     __cc_log "branched: tmux window '$window_name' in session '$tmux_name'"
 }
@@ -542,5 +747,6 @@ cc-doctor() {
 # (e.g. `bash -c 'cc-explore foo'`) don't fail with "__cc_repo_root: not found".
 export -f __cc_color_or_plain __cc_die __cc_log __cc_repo_root __cc_mint_session_id __cc_write_mode_file __cc_write_sandbox_settings \
           __cc_read_mode __cc_find_sandbox_settings \
+          __cc_model_policy_path __cc_resolve_model __cc_model_prepare __cc_model_flag_str \
           __cc_company_tmux_session __cc_company_tmux_exists __cc_company_tmux_ensure \
           cc cc-branch cc-teleport cc-explore cc-build cc-continue cc-doctor 2>/dev/null || true

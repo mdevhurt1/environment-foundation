@@ -68,6 +68,11 @@ log_ok "linked $CLAUDE_DIR/skills -> $CANONICAL/skills"
 # cc-functions in a stable location too
 link "$CANONICAL/shell/cc-functions.sh" "$CLAUDE_DIR/cc-functions.sh"
 
+# Role->model policy. Portable intent, versioned in the repo; the wrappers
+# resolve --model from it at launch. Machine-local model pins (if any) belong
+# in settings.local.json, never in canonical/settings.json.
+link "$CANONICAL/model-policy.json" "$CLAUDE_DIR/model-policy.json"
+
 # Tree-slot helpers invoked from session-start / end-conversation skills.
 # Kept as separate scripts (not skill-inline bash) so each runs in a single
 # Bash tool call with self-contained shell state.

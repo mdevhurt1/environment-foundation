@@ -113,10 +113,14 @@ if [ -n "$want_id" ] && [ "$want_id" != "$session_id" ]; then
 fi
 
 parent_id=$( { grep '^parent_id=' "$mode_file" || true; } | cut -d= -f2-)
-slug=$(grep '^slug=' "$mode_file" | cut -d= -f2-)
-mode=$(grep '^mode=' "$mode_file" | cut -d= -f2-)
-started_at=$(grep '^started_at=' "$mode_file" | cut -d= -f2-)
-parent_repo=$(grep '^parent_repo=' "$mode_file" | cut -d= -f2-)
+# Same grep || true guard as above: commit 85d2407 added it for session_id and
+# parent_id but not for these four, so a .cc-mode missing any one of them still
+# aborted the script at exit 1 under pipefail -- silently, before the WARN that
+# the header promises for legacy files.
+slug=$( { grep '^slug=' "$mode_file" || true; } | cut -d= -f2-)
+mode=$( { grep '^mode=' "$mode_file" || true; } | cut -d= -f2-)
+started_at=$( { grep '^started_at=' "$mode_file" || true; } | cut -d= -f2-)
+parent_repo=$( { grep '^parent_repo=' "$mode_file" || true; } | cut -d= -f2-)
 
 # Validate identifiers before interpolating into paths/heredocs. session_id
 # and parent_id must match the 22-hex format minted by __cc_mint_session_id;

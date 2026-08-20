@@ -45,7 +45,7 @@ started_at=$(grep '^started_at=' "$mode_file" | cut -d= -f2-)
 parent_repo=$(grep '^parent_repo=' "$mode_file" | cut -d= -f2-)
 
 # Validate identifiers before interpolating into paths/heredocs. session_id
-# and parent_id must match the 22-hex format minted by _cc_mint_session_id;
+# and parent_id must match the 22-hex format minted by __cc_mint_session_id;
 # parent_id may also legitimately be empty (root sessions). slug and mode
 # flow into the heredoc body — strip newlines and restrict to safe chars.
 if ! [[ "$session_id" =~ ^[0-9a-f]{22}$ ]]; then

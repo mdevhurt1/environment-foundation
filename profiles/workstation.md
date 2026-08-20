@@ -41,17 +41,22 @@ Run all baseline steps in order:
 - [ ] [Stream Deck — install](../software/peripherals/streamdeck/scripts/install.sh) `[workstation]` — Boatswain + udev rule; **replug the device** afterwards
 - [ ] [Stream Deck — verify](../software/peripherals/streamdeck/scripts/verify.sh) `[workstation]`
 
-### 5. Communications
+### 5. Productivity
+
+- [ ] [Obsidian — install](../software/productivity/obsidian/scripts/install.sh) `[workstation]` — Obsidian only; LiveSync is configured in-app from your setup URI
+- [ ] [Obsidian — verify](../software/productivity/obsidian/scripts/verify.sh) `[workstation]` — **fails** if this device is configured not to replicate; run it on every device
+
+### 6. Communications
 
 - [ ] [Signal Desktop — install](../software/communications/signal/scripts/install.sh) `[workstation]`
 - [ ] [Signal Desktop — verify](../software/communications/signal/scripts/verify.sh) `[workstation]`
 
-### 6. Media
+### 7. Media
 
 - [ ] [OBS Studio — install](../software/media/obs-studio/scripts/install.sh) `[workstation]`
 - [ ] [OBS Studio — verify](../software/media/obs-studio/scripts/verify.sh) `[workstation]`
 
-### 7. Gaming *(skip on workplace or headless machines)*
+### 8. Gaming *(skip on workplace or headless machines)*
 
 - [ ] [Steam — install](../software/gaming/steam/scripts/install.sh) `[gaming]`
 - [ ] [Discord — install](../software/gaming/discord/scripts/install.sh) `[gaming]`

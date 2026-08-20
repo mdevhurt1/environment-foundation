@@ -1,0 +1,21 @@
+{
+  "_fixture": "SILENT FREEZE — the state this module exists to catch. Fully configured, every auto-sync trigger off, no error anywhere in the app. A laptop sat in this state for roughly a month (2026-07-12 to 2026-08-09) with a vault that looked current on disk. verify.sh MUST fail on this file. Synthetic: no endpoint, credentials or passphrase.",
+  "isConfigured": true,
+  "liveSync": false,
+  "periodicReplication": false,
+  "periodicReplicationInterval": 60,
+  "syncOnSave": false,
+  "syncOnStart": false,
+  "syncOnFileOpen": false,
+  "syncOnEditorSave": false,
+  "suspendFileWatching": false,
+  "suspendParseReplicationResult": false,
+  "disableMarkdownAutoMerge": true,
+  "writeDocumentsIfConflicted": true,
+  "encrypt": true,
+  "usePathObfuscation": true,
+  "couchDB_URI": "",
+  "couchDB_USER": "",
+  "couchDB_PASSWORD": "",
+  "passphrase": ""
+}

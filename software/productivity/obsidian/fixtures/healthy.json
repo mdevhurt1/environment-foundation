@@ -1,0 +1,21 @@
+{
+  "_fixture": "HEALTHY — one auto-sync trigger on (liveSync). verify.sh must pass. Synthetic: no endpoint, credentials or passphrase, and none may ever be added here.",
+  "isConfigured": true,
+  "liveSync": true,
+  "periodicReplication": false,
+  "periodicReplicationInterval": 60,
+  "syncOnSave": false,
+  "syncOnStart": false,
+  "syncOnFileOpen": false,
+  "syncOnEditorSave": false,
+  "suspendFileWatching": false,
+  "suspendParseReplicationResult": false,
+  "disableMarkdownAutoMerge": true,
+  "writeDocumentsIfConflicted": true,
+  "encrypt": true,
+  "usePathObfuscation": true,
+  "couchDB_URI": "",
+  "couchDB_USER": "",
+  "couchDB_PASSWORD": "",
+  "passphrase": ""
+}

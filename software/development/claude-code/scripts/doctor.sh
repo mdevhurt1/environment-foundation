@@ -185,6 +185,72 @@ else
     fi
 fi
 
+# ---- 9. SIGPIPE-safe pipelines in pipefail scripts ----
+heading "Pipeline SIGPIPE safety"
+# A consumer that stops reading early -- head, grep -q, sed -n Nq, read, or an
+# awk with a bare `exit` -- closes the pipe while its producer is still
+# writing. The producer dies of SIGPIPE (exit 141), pipefail promotes that to
+# the pipeline status, and errexit turns it into a silent abort that prints
+# nothing at all. It only starts firing once the producer outgrows one read
+# block (~8 KiB, about 400 lines of `find` output), so a script works for
+# months and then stops working because the DATA grew, not the code. That is
+# exactly how cc-ring-scan.sh died on tasks/ENPM808-87 on 2026-08-20.
+#
+# Only files that actually set pipefail are scanned: `uuidgen | tr -d - |
+# head -c 22` is harmless in cc-functions.sh, which sets no pipefail and whose
+# producers are bounded anyway. Add a trailing `# sigpipe-ok` to a line whose
+# producer is provably smaller than a read block to silence it.
+sigpipe_hits=""
+while IFS= read -r f; do
+    grep -qE '^[[:space:]]*set -[a-zA-Z]*o pipefail' "$f" || continue
+    rel="${f#"$REPO_ROOT"/}"
+
+    # (a) line-based early-exit consumers sitting on the right of a pipe
+    hits_a=$(grep -nE '\|[[:space:]]*(head([[:space:]]|$)|grep [^|]*-[a-zA-Z]*q|sed -n [^|]*[0-9]q|read([[:space:]]|$))' "$f" \
+             | grep -vE ':[[:space:]]*#' | grep -v 'sigpipe-ok')
+    [ -n "$hits_a" ] && sigpipe_hits="$sigpipe_hits$(printf '%s\n' "$hits_a" | sed "s|^|$rel:|")
+"
+
+    # (b) awk programs on the right of a pipe that can `exit` before EOF. The
+    # program body is single-quoted and may span many lines, so track it.
+    hits_b=$(awk -v rel="$rel" '
+        { line = $0; sub(/^[[:space:]]*#.*/, "", line) }
+        !inprog && line ~ /\|[[:space:]]*awk/ {
+            inprog = 1; start = FNR
+            rest = line; sub(/.*\|[[:space:]]*awk/, "", rest); body = rest
+            if (rest ~ /\047[^\047]*\047[[:space:]]*[)|]?[[:space:]]*$/ || rest !~ /\047/) { check(); inprog = 0 }
+            next
+        }
+        inprog {
+            # Accumulate the RAW line: the comment strip above would erase an
+            # awk-level `# sigpipe-ok` before check() could see it.
+            body = body "\n" $0
+            if (line ~ /^[[:space:]]*\047/) { check(); inprog = 0 }
+            next
+        }
+        END { if (inprog) check() }
+        function check(   b) {
+            # Test the opt-out BEFORE stripping awk comments -- the marker
+            # lives in a comment, so the order matters.
+            if (body ~ /sigpipe-ok/) return
+            b = body; gsub(/#[^\n]*/, "", b)
+            if (b ~ /(^|[^A-Za-z0-9_])exit([^A-Za-z0-9_]|$)/)
+                printf "%s:%d: awk consumer can exit before EOF\n", rel, start
+        }
+    ' "$f")
+    [ -n "$hits_b" ] && sigpipe_hits="$sigpipe_hits$hits_b
+"
+done < <(find "$CANONICAL" -name '*.sh' | sort)
+
+if [ -n "$sigpipe_hits" ]; then
+    fail "early-exit pipe consumer in a pipefail script (SIGPIPE-aborts on large input)"
+    printf '%s' "$sigpipe_hits" | sed 's|^|       |'
+    printf '       fix: use a consumer that reads to EOF (awk max instead of\n'
+    printf '            sort|head), or mark the line # sigpipe-ok if bounded\n'
+else
+    ok "no early-exit pipe consumers in pipefail scripts under canonical/"
+fi
+
 # ---- summary ----
 heading "Summary"
 printf 'OK: %d  WARN: %d  FAIL: %d\n' "$OK" "$WARN" "$FAIL"

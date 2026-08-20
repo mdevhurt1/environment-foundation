@@ -121,6 +121,11 @@ slug=$( { grep '^slug=' "$mode_file" || true; } | cut -d= -f2-)
 mode=$( { grep '^mode=' "$mode_file" || true; } | cut -d= -f2-)
 started_at=$( { grep '^started_at=' "$mode_file" || true; } | cut -d= -f2-)
 parent_repo=$( { grep '^parent_repo=' "$mode_file" || true; } | cut -d= -f2-)
+# Model stamp. Absent in any .cc-mode written before the model policy landed,
+# and absent for bare launches -- an empty value is legitimate, so these stay
+# WARN-free. Same `grep || true` guard as the four fields above.
+model=$( { grep '^model=' "$mode_file" || true; } | cut -d= -f2-)
+model_source=$( { grep '^model_source=' "$mode_file" || true; } | cut -d= -f2-)
 
 # Validate identifiers before interpolating into paths/heredocs. session_id
 # and parent_id must match the 22-hex format minted by __cc_mint_session_id;
@@ -143,6 +148,28 @@ fi
 if ! [[ "$mode" =~ ^[a-zA-Z0-9_./-]*$ ]]; then
     echo "WARN: malformed mode in $mode_file (refusing to write tree slot)" >&2
     exit 0
+fi
+# model/model_source flow into the YAML frontmatter, so they are constrained to
+# characters that cannot break out of a scalar. Square brackets are allowed
+# because exact model ids carry a context variant: claude-opus-5[1m]. A
+# malformed value is blanked with a WARN rather than aborting the whole slot
+# write -- losing the model stamp is worth less than losing the session's tree
+# presence entirely.
+#
+# The class is written ^[][a-zA-Z0-9._:-]*$ -- ] FIRST and - LAST -- because a
+# POSIX bracket expression has no backslash escaping: the intuitive
+# [a-zA-Z0-9._:\[\]-] is parsed as a class ending at the first ] and silently
+# matches nothing useful, which blanked every stamped model on the first run
+# of this code.
+model=${model//$'\n'/}
+model_source=${model_source//$'\n'/}
+if ! [[ "$model" =~ ^[][a-zA-Z0-9._:-]*$ ]]; then
+    echo "WARN: malformed model in $mode_file (recording as empty)" >&2
+    model=""
+fi
+if ! [[ "$model_source" =~ ^[a-zA-Z0-9._:-]*$ ]]; then
+    echo "WARN: malformed model_source in $mode_file (recording as empty)" >&2
+    model_source=""
 fi
 
 # task_id: defaults to slug; Plane-backed tasks can be edited in the slot later.
@@ -178,6 +205,8 @@ started_at: $started_at
 ended_at:
 worktree: $(dirname "$mode_file")
 parent_repo: $parent_repo
+model: $model
+model_source: $model_source
 ---
 
 # Session $session_id

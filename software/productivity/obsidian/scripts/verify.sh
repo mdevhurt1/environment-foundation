@@ -222,12 +222,16 @@ if [ "$config_readable" -eq 1 ]; then
       fi
     done
 
-    # 3d. Conflict-handling posture. Advisory, not pass/fail — see README.
+    # 3d. Conflict-handling posture. FAILING since 2026-08-20: CEO ruled
+    # auto-merge off vault-wide ("Always prompt merge conflicts" ON) after the
+    # 2026-08-20 MEMORY.md corruption. A device drifting back to auto-merge is
+    # a defect, not a preference.
     if [ "${CFG[disableMarkdownAutoMerge]:-absent}" != "1" ]; then
-      skipped "markdown auto-merge is enabled (disableMarkdownAutoMerge=${CFG[disableMarkdownAutoMerge]:-absent})"
+      failed "markdown auto-merge is enabled (disableMarkdownAutoMerge=${CFG[disableMarkdownAutoMerge]:-absent}) — CEO ruling 2026-08-20 requires it off"
       note "measured 2026-08-20: auto-merging MEMORY.md fused tokens across entries"
-      note "and the damage passed a clean structural check. Turning this on routes"
-      note "conflicts to the dialog instead. Vault-wide behaviour change — CEO call."
+      note "and the damage passed a clean structural check. Fix: Settings ->"
+      note "Self-hosted LiveSync -> Sync Settings -> Conflict resolution ->"
+      note "'Always prompt merge conflicts' ON."
     else
       log_ok "markdown auto-merge is disabled (conflicts go to the dialog)"
     fi

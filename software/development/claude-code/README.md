@@ -69,9 +69,72 @@ Verify: `cc-doctor`
 | `cc-explore <slug>` | sandbox + git worktree + strict perms | research, debug, brainstorm |
 | `cc-build` | full perms, main worktree (requires plan) | execute approved plan |
 | `cc-continue [name]` | inherits original mode from `.cc-mode` | resume a worktree/session |
+| `cc-branch <task-id> [<repo>]` | branched worker in its own worktree + tmux window | delegate a task from the EA |
 | `cc-doctor` | n/a | verify install, detect drift |
 
 Direct `claude` invocation still works but is non-SOP — prefer wrappers.
+Only the wrappers apply the model policy below; a bare `claude` still gets
+Claude Code's Default.
+
+### Model policy
+
+Claude Code's "Default" resolves to the **most capable model available to the
+account**, so it is a moving referent: when a new model joins the account
+roster, Default silently captures every session that has not pinned one. On
+2026-08-20 that moved the EA session from Opus 5 to Fable 5 with no diff and no
+output anywhere. It had already moved Opus 4.8 -> Opus 5 before that.
+
+`canonical/model-policy.json` maps **session roles to model choices**, and the
+`cc-*` wrappers resolve `--model` from it at launch:
+
+| Role | Used by |
+|---|---|
+| `ea` | `cc` — the command-center / EA session |
+| `branched-worker` | `cc-branch` children |
+| `explore` | `cc-explore` |
+| `build` | `cc-build` |
+| `review-lane`, `cheap-mechanical`, `subagent-default`, `scheduled` | reserved; not yet mechanized |
+
+Each role takes one of three legal values:
+
+- `"track-latest"` — deliberately accept Default; the tier **may move**. The
+  wrapper passes no `--model` and records `model_source=policy:<role>`, so the
+  choice is on record even though the command line looks unpinned.
+- a tier alias — `opus`, `sonnet`, `fable`, `haiku`. Tier pinned, version
+  tracks within it. This is what survives a new model joining the roster.
+- an exact id — e.g. `claude-opus-5[1m]`. Fully pinned.
+
+The point is not to ban Default. It is that Default must be **chosen** rather
+than inherited.
+
+**The EA session picks its model up here.** `cc` resolves role `ea` before
+creating the tmux session and passes the flag inside the window's command
+string, so the EA is subject to the same policy as everything it spawns.
+
+**Override a single launch** with an env prefix — recorded as
+`model_source=env`, so an override is as visible in the tree as a policy
+choice is:
+
+```bash
+CC_MODEL=opus cc-branch <task-id> [<repo-path>]
+```
+
+`CC_MODEL` also bypasses policy lookup entirely, so a missing or broken policy
+file can never strand you. Absent that override the wrappers **refuse to
+launch** rather than falling back to Default — a refusal costs one command,
+whereas the silent version was discovered by a bill.
+
+**Where the choice is visible:**
+
+- `.cc-mode` and the session's tree slot carry `model` / `model_source`
+  (intent).
+- The statusline shows the **running** model from the harness, plus a
+  `MODEL-DRIFT` marker when it disagrees with the stamped intent (reality).
+
+**When the account roster changes**, `cc-doctor` check 10c WARNs about any
+model not listed in the policy's `known_models`. Adding it there *is* the act
+of deciding that `track-latest` still applies; pinning the affected roles is
+the other option.
 
 ### Bookend skills
 

@@ -26,14 +26,38 @@
     "track-latest still applies to it."
   ],
   "roles": {
-    "ea":               { "model": "track-latest", "note": "command-center / EA session (cc)" },
-    "branched-worker":  { "model": "track-latest", "note": "cc-branch children" },
-    "explore":          { "model": "track-latest", "note": "cc-explore" },
-    "build":            { "model": "track-latest", "note": "cc-build" },
-    "review-lane":      { "model": "track-latest", "note": "Workflow verify/judge lanes -- not yet mechanized" },
-    "cheap-mechanical": { "model": "track-latest", "note": "bulk mechanical Workflow stages -- not yet mechanized" },
-    "subagent-default": { "model": "track-latest", "note": "in-process Agent tool -- not yet mechanized" },
-    "scheduled":        { "model": "track-latest", "note": "cron / cloud agents -- not yet mechanized" }
+    "ea": {
+      "model": "opus",
+      "note": "command-center / EA session (cc)"
+    },
+    "branched-worker": {
+      "model": "opus",
+      "note": "cc-branch children"
+    },
+    "explore": {
+      "model": "opus",
+      "note": "cc-explore"
+    },
+    "build": {
+      "model": "opus",
+      "note": "cc-build"
+    },
+    "review-lane": {
+      "model": "track-latest",
+      "note": "Workflow verify/judge lanes -- not yet mechanized"
+    },
+    "cheap-mechanical": {
+      "model": "track-latest",
+      "note": "bulk mechanical Workflow stages -- not yet mechanized"
+    },
+    "subagent-default": {
+      "model": "track-latest",
+      "note": "in-process Agent tool -- not yet mechanized"
+    },
+    "scheduled": {
+      "model": "track-latest",
+      "note": "cron / cloud agents -- not yet mechanized"
+    }
   },
   "known_models": [
     "claude-fable-5[1m]"

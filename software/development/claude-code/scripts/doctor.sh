@@ -149,6 +149,42 @@ for repo in "$REPO_ROOT" "$HOME/environment-secrets"; do
     fi
 done
 
+# ---- 8. Shell-snapshot safety of cc-* helper names ----
+heading "Shell snapshot safety"
+# Claude Code's Bash tool does not re-run your rc files. It restores shell state
+# from ~/.claude/shell-snapshots/snapshot-<shell>-*.sh, which is generated with:
+#
+#     typeset +f | grep -vE '^_[^_]' | while read func; do typeset -f "$func"; done
+#
+# That filter exists to drop zsh completion functions (conventionally named
+# `_command`), and it explicitly keeps double-underscore helpers. By the same
+# rule it silently drops OUR single-underscore helpers. The public cc-* function
+# is captured, its `_cc_*` callees are not, and because cc-branch has no `set -e`
+# it half-runs: worktree + tmux window get created, but no .cc-mode, no
+# session_id, no tree slot and no spawned event. Enforce `__cc_*` naming.
+ccf="$CANONICAL/shell/cc-functions.sh"
+if [ ! -f "$ccf" ]; then
+    fail "canonical/shell/cc-functions.sh missing — cannot check snapshot safety"
+else
+    # Scan code only: strip whole-line comments first, so the explanatory prose
+    # in cc-functions.sh (which necessarily spells out the old `_cc_*` names)
+    # cannot trip the check. Require at least one character after the prefix so
+    # a bare `_cc_` in a trailing comment is not mistaken for an identifier.
+    code=$(grep -vE '^[[:space:]]*#' "$ccf")
+    hostile_defs=$(printf '%s\n' "$code" | grep -oE '^_[^_][A-Za-z0-9_]*\(\)' \
+                   | tr -d '()' | sort -u)
+    hostile_calls=$(printf '%s\n' "$code" | grep -oE '(^|[^A-Za-z0-9_])_cc_[A-Za-z0-9][A-Za-z0-9_]*' \
+                    | grep -oE '_cc_[A-Za-z0-9_]*' | sort -u)
+    if [ -n "$hostile_defs" ] || [ -n "$hostile_calls" ]; then
+        fail "cc-functions.sh uses helper names the shell snapshot drops (single '_' prefix)"
+        printf '       offending names:\n'
+        printf '         %s\n' $(printf '%s\n%s\n' "$hostile_defs" "$hostile_calls" | sort -u)
+        printf '       fix: rename to __cc_* (the snapshot filter keeps double underscores)\n'
+    else
+        ok "cc-* helper names survive the shell-snapshot filter (no single-underscore helpers)"
+    fi
+fi
+
 # ---- summary ----
 heading "Summary"
 printf 'OK: %d  WARN: %d  FAIL: %d\n' "$OK" "$WARN" "$FAIL"

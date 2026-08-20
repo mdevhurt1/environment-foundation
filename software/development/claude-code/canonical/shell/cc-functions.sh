@@ -12,25 +12,43 @@
 # The settings file lives inside the worktree so it is cleaned up automatically
 # when the worktree is removed.
 
+# ---- why the helpers are named __cc_* (double underscore) ----
+# Claude Code's Bash tool does not re-run your rc files. It restores shell state
+# from ~/.claude/shell-snapshots/snapshot-<shell>-*.sh, generated with:
+#
+#     typeset +f | grep -vE '^_[^_]' | while read func; do typeset -f "$func"; done
+#
+# The filter drops zsh completion functions (conventionally `_command`) and
+# explicitly keeps double-underscore helpers. Single-underscore helpers of ours
+# were dropped by the same rule: the public cc-* function was captured, its
+# `_cc_*` callees were not, and since these functions have no `set -e` they
+# limped past `command not found` and half-spawned a session (worktree + tmux
+# window, but no .cc-mode, no session_id, no tree slot, no spawned event).
+# Keep the double underscore. scripts/doctor.sh check 8 enforces it.
+#
+# Each public cc-* function additionally carries the two-line snapshot guard
+# below, so a snapshot that predates this file (an already-running session)
+# aborts loudly instead of half-running.
+
 # ---- internal helpers ----
-_cc_color_or_plain() {
+__cc_color_or_plain() {
     if [ -t 2 ] && [ "${TERM:-dumb}" != "dumb" ]; then
         printf '%s' "$1"
     fi
 }
-_cc_die() {
-    printf '%s[cc] %s%s\n' "$(_cc_color_or_plain $'\033[01;31m')" "$*" "$(_cc_color_or_plain $'\033[00m')" >&2
+__cc_die() {
+    printf '%s[cc] %s%s\n' "$(__cc_color_or_plain $'\033[01;31m')" "$*" "$(__cc_color_or_plain $'\033[00m')" >&2
     return 1
 }
-_cc_log() {
-    printf '%s[cc] %s%s\n' "$(_cc_color_or_plain $'\033[01;36m')" "$*" "$(_cc_color_or_plain $'\033[00m')" >&2
+__cc_log() {
+    printf '%s[cc] %s%s\n' "$(__cc_color_or_plain $'\033[01;36m')" "$*" "$(__cc_color_or_plain $'\033[00m')" >&2
 }
 
-_cc_repo_root() {
+__cc_repo_root() {
     git rev-parse --show-toplevel 2>/dev/null
 }
 
-_cc_mint_session_id() {
+__cc_mint_session_id() {
     # 22-char hex ID derived from uuidgen. Falls back to /dev/urandom on
     # systems without uuidgen (rare on Ubuntu).
     if command -v uuidgen >/dev/null 2>&1; then
@@ -41,31 +59,31 @@ _cc_mint_session_id() {
 }
 
 # ---- company tmux helpers ----
-_cc_company_tmux_session() {
+__cc_company_tmux_session() {
     # Single point of truth for the company tmux session name.
     printf '%s' "company"
 }
 
-_cc_company_tmux_exists() {
+__cc_company_tmux_exists() {
     local name
-    name=$(_cc_company_tmux_session)
+    name=$(__cc_company_tmux_session)
     tmux has-session -t "$name" 2>/dev/null
 }
 
-_cc_company_tmux_ensure() {
+__cc_company_tmux_ensure() {
     # Create the company tmux session if it does not exist. Idempotent.
     local name
-    name=$(_cc_company_tmux_session)
-    if _cc_company_tmux_exists; then
+    name=$(__cc_company_tmux_session)
+    if __cc_company_tmux_exists; then
         return 0
     fi
     # New detached session, first window owned by the caller; we'll rename
     # the first window from "cc" (the launcher attaches in cc()).
     tmux new-session -d -s "$name" -n "cc"
-    _cc_log "company tmux session created: $name"
+    __cc_log "company tmux session created: $name"
 }
 
-_cc_write_mode_file() {
+__cc_write_mode_file() {
     # $1 = directory, $2 = mode, $3 = slug, $4 = parent_repo,
     # $5 = session_id, $6 = parent_id (may be empty for top-level launches)
     # Scrub newlines and '=' from session_id/parent_id at the write boundary
@@ -85,13 +103,13 @@ EOF
 
 # Write sandbox settings into the worktree so --settings can inject them.
 # $1 = worktree directory path
-_cc_write_sandbox_settings() {
+__cc_write_sandbox_settings() {
     local dir="$1"
     printf '%s\n' '{"sandbox":{"enabled":true,"failIfUnavailable":true}}' \
         > "$dir/.cc-sandbox-settings.json"
 }
 
-_cc_read_mode() {
+__cc_read_mode() {
     # Walk up from cwd looking for .cc-mode; print contents on stdout.
     local dir
     dir=$(pwd)
@@ -107,7 +125,7 @@ _cc_read_mode() {
 
 # Find the nearest .cc-sandbox-settings.json by walking up from cwd.
 # Prints the path on stdout; returns 1 if not found.
-_cc_find_sandbox_settings() {
+__cc_find_sandbox_settings() {
     local dir
     dir=$(pwd)
     while [ "$dir" != "/" ]; do
@@ -122,16 +140,25 @@ _cc_find_sandbox_settings() {
 
 # ---- cc-explore ----
 cc-explore() {
+    # Snapshot guard — see "why the helpers are named __cc_*" at the top of this
+    # file. Re-source if the helpers are absent; abort before any side effects.
+    typeset -f __cc_die >/dev/null 2>&1 || \
+        . "${CC_FUNCTIONS_SH:-$HOME/.claude/cc-functions.sh}" 2>/dev/null
+    typeset -f __cc_die >/dev/null 2>&1 || {
+        printf '[cc] %s: cc helpers unavailable (tried %s); aborting before side effects\n' \
+            'cc-explore' "${CC_FUNCTIONS_SH:-$HOME/.claude/cc-functions.sh}" >&2
+        return 127
+    }
     local slug="${1:-adhoc}"
 
     if ! [[ "$slug" =~ ^[a-zA-Z0-9_-]+$ ]]; then
-        _cc_die "slug must match [a-zA-Z0-9_-]+ (got: $slug)"
+        __cc_die "slug must match [a-zA-Z0-9_-]+ (got: $slug)"
         return 1
     fi
 
     local repo_root
-    repo_root=$(_cc_repo_root) || { _cc_die "not in a git repo"; return 1; }
-    [ "$(pwd)" = "$repo_root" ] || { _cc_die "must be at repo root: $repo_root"; return 1; }
+    repo_root=$(__cc_repo_root) || { __cc_die "not in a git repo"; return 1; }
+    [ "$(pwd)" = "$repo_root" ] || { __cc_die "must be at repo root: $repo_root"; return 1; }
 
     local repo_name worktree branch
     repo_name=$(basename "$repo_root")
@@ -139,7 +166,7 @@ cc-explore() {
     branch="explore/${slug}"
 
     if [ -d "$worktree" ]; then
-        _cc_log "worktree already exists at $worktree — reusing"
+        __cc_log "worktree already exists at $worktree — reusing"
     else
         # If the branch already exists (e.g. worktree was pruned), add without -b.
         if git show-ref --verify --quiet "refs/heads/${branch}"; then
@@ -150,20 +177,29 @@ cc-explore() {
     fi
 
     local session_id
-    session_id=$(_cc_mint_session_id)
-    _cc_write_mode_file "$worktree" exploration "$slug" "$repo_root" "$session_id" "${CC_PARENT_ID:-}"
-    _cc_write_sandbox_settings "$worktree"
+    session_id=$(__cc_mint_session_id)
+    __cc_write_mode_file "$worktree" exploration "$slug" "$repo_root" "$session_id" "${CC_PARENT_ID:-}"
+    __cc_write_sandbox_settings "$worktree"
 
-    _cc_log "EXPLORE mode: sandboxed (--settings), branch=$branch, worktree=$worktree"
+    __cc_log "EXPLORE mode: sandboxed (--settings), branch=$branch, worktree=$worktree"
     cd "$worktree" || return 1
     claude --settings "$worktree/.cc-sandbox-settings.json"
 }
 
 # ---- cc-build ----
 cc-build() {
+    # Snapshot guard — see "why the helpers are named __cc_*" at the top of this
+    # file. Re-source if the helpers are absent; abort before any side effects.
+    typeset -f __cc_die >/dev/null 2>&1 || \
+        . "${CC_FUNCTIONS_SH:-$HOME/.claude/cc-functions.sh}" 2>/dev/null
+    typeset -f __cc_die >/dev/null 2>&1 || {
+        printf '[cc] %s: cc helpers unavailable (tried %s); aborting before side effects\n' \
+            'cc-build' "${CC_FUNCTIONS_SH:-$HOME/.claude/cc-functions.sh}" >&2
+        return 127
+    }
     local repo_root
-    repo_root=$(_cc_repo_root) || { _cc_die "not in a git repo"; return 1; }
-    [ "$(pwd)" = "$repo_root" ] || { _cc_die "must be at repo root: $repo_root"; return 1; }
+    repo_root=$(__cc_repo_root) || { __cc_die "not in a git repo"; return 1; }
+    [ "$(pwd)" = "$repo_root" ] || { __cc_die "must be at repo root: $repo_root"; return 1; }
 
     local repo_name
     repo_name=$(basename "$repo_root")
@@ -181,31 +217,40 @@ cc-build() {
     fi
 
     if [ "$has_plan" -eq 0 ]; then
-        _cc_die "build mode requires a plan or spec; brainstorm first (cc-explore)"
+        __cc_die "build mode requires a plan or spec; brainstorm first (cc-explore)"
         return 1
     fi
 
     local session_id
-    session_id=$(_cc_mint_session_id)
-    _cc_write_mode_file "$repo_root" build "${repo_name}" "$repo_root" "$session_id" "${CC_PARENT_ID:-}"
-    _cc_log "BUILD mode: full perms, no prompts"
+    session_id=$(__cc_mint_session_id)
+    __cc_write_mode_file "$repo_root" build "${repo_name}" "$repo_root" "$session_id" "${CC_PARENT_ID:-}"
+    __cc_log "BUILD mode: full perms, no prompts"
     claude --dangerously-skip-permissions
 }
 
 # ---- cc-continue ----
 cc-continue() {
+    # Snapshot guard — see "why the helpers are named __cc_*" at the top of this
+    # file. Re-source if the helpers are absent; abort before any side effects.
+    typeset -f __cc_die >/dev/null 2>&1 || \
+        . "${CC_FUNCTIONS_SH:-$HOME/.claude/cc-functions.sh}" 2>/dev/null
+    typeset -f __cc_die >/dev/null 2>&1 || {
+        printf '[cc] %s: cc helpers unavailable (tried %s); aborting before side effects\n' \
+            'cc-continue' "${CC_FUNCTIONS_SH:-$HOME/.claude/cc-functions.sh}" >&2
+        return 127
+    }
     # Only accept a worktree directory as an argument; plan-file branch dropped.
     if [ -n "${1:-}" ]; then
         if [ -d "$1" ]; then
             cd "$1" || return 1
         else
-            _cc_die "no worktree dir named: $1"
+            __cc_die "no worktree dir named: $1"
             return 1
         fi
     fi
 
     local mode_data
-    mode_data=$(_cc_read_mode) || { _cc_die "no .cc-mode found upward from cwd"; return 1; }
+    mode_data=$(__cc_read_mode) || { __cc_die "no .cc-mode found upward from cwd"; return 1; }
 
     # Parse .cc-mode into local vars — do NOT export; exporting leaks into the
     # caller's interactive shell and poisons the next claude invocation.
@@ -221,16 +266,16 @@ cc-continue() {
 
     case "${mode:-}" in
         exploration)
-            _cc_log "CONTINUE (was EXPLORE: slug=${slug:-?}, started=${started_at:-?})"
+            __cc_log "CONTINUE (was EXPLORE: slug=${slug:-?}, started=${started_at:-?})"
             # Re-locate the sandbox settings file inside the worktree.
             local sandbox_settings
-            if sandbox_settings=$(_cc_find_sandbox_settings); then
-                _cc_log "sandbox settings: $sandbox_settings"
+            if sandbox_settings=$(__cc_find_sandbox_settings); then
+                __cc_log "sandbox settings: $sandbox_settings"
                 claude --continue --settings "$sandbox_settings"
             else
                 # Settings file missing (e.g. deleted manually); recreate in cwd.
-                _cc_write_sandbox_settings "$(pwd)"
-                _cc_log "sandbox settings recreated at $(pwd)/.cc-sandbox-settings.json"
+                __cc_write_sandbox_settings "$(pwd)"
+                __cc_log "sandbox settings recreated at $(pwd)/.cc-sandbox-settings.json"
                 claude --continue --settings "$(pwd)/.cc-sandbox-settings.json"
             fi
             ;;
@@ -243,13 +288,13 @@ cc-continue() {
             read -r confirm
             case "$confirm" in
                 y|Y|yes|YES) ;;
-                *) _cc_die "cc-continue cancelled"; return 1 ;;
+                *) __cc_die "cc-continue cancelled"; return 1 ;;
             esac
-            _cc_log "CONTINUE (was BUILD)"
+            __cc_log "CONTINUE (was BUILD)"
             claude --dangerously-skip-permissions --continue
             ;;
         *)
-            _cc_die "unknown mode in .cc-mode: ${mode:-<empty>}"
+            __cc_die "unknown mode in .cc-mode: ${mode:-<empty>}"
             return 1
             ;;
     esac
@@ -259,25 +304,34 @@ cc-continue() {
 # NOTE: --dangerously-skip-permissions is intentional here; see spec §4.3
 # for the "known gap" acceptance. Closes when Phase 5 sandbox profiles land.
 cc() {
+    # Snapshot guard — see "why the helpers are named __cc_*" at the top of this
+    # file. Re-source if the helpers are absent; abort before any side effects.
+    typeset -f __cc_die >/dev/null 2>&1 || \
+        . "${CC_FUNCTIONS_SH:-$HOME/.claude/cc-functions.sh}" 2>/dev/null
+    typeset -f __cc_die >/dev/null 2>&1 || {
+        printf '[cc] %s: cc helpers unavailable (tried %s); aborting before side effects\n' \
+            'cc' "${CC_FUNCTIONS_SH:-$HOME/.claude/cc-functions.sh}" >&2
+        return 127
+    }
     local cc_workspace="$HOME/vault/20-surface/company/_command-center"
 
     if [ ! -d "$cc_workspace" ]; then
-        _cc_die "command center workspace not found at $cc_workspace; run Phase 1 setup"
+        __cc_die "command center workspace not found at $cc_workspace; run Phase 1 setup"
         return 1
     fi
 
     if ! command -v tmux >/dev/null 2>&1; then
-        _cc_die "tmux is required for Phase 2; install with: sudo apt install tmux"
+        __cc_die "tmux is required for Phase 2; install with: sudo apt install tmux"
         return 1
     fi
 
     local tmux_name
-    tmux_name=$(_cc_company_tmux_session)
+    tmux_name=$(__cc_company_tmux_session)
 
     # If the company tmux session already exists, just attach. The CC window
     # may already be running; don't disturb it.
-    if _cc_company_tmux_exists; then
-        _cc_log "attaching to existing company tmux session"
+    if __cc_company_tmux_exists; then
+        __cc_log "attaching to existing company tmux session"
         tmux attach-session -t "$tmux_name"
         return $?
     fi
@@ -285,10 +339,10 @@ cc() {
     # Otherwise, create the session detached, write a CC .cc-mode and tree slot,
     # then attach. The first window (named "cc") runs claude in the CC workspace.
     local session_id
-    session_id=$(_cc_mint_session_id)
-    _cc_write_mode_file "$cc_workspace" command-center cc "$cc_workspace" "$session_id" ""
+    session_id=$(__cc_mint_session_id)
+    __cc_write_mode_file "$cc_workspace" command-center cc "$cc_workspace" "$session_id" ""
 
-    _cc_log "COMMAND CENTER: session_id=$session_id"
+    __cc_log "COMMAND CENTER: session_id=$session_id"
 
     # Create tmux session with first window in the CC workspace running claude.
     # The EA orchestrates from a trusted workspace and would prompt-thrash
@@ -301,21 +355,30 @@ cc() {
 # NOTE: --dangerously-skip-permissions is intentional here; see spec §4.3
 # for the "known gap" acceptance. Closes when Phase 5 sandbox profiles land.
 cc-branch() {
+    # Snapshot guard — see "why the helpers are named __cc_*" at the top of this
+    # file. Re-source if the helpers are absent; abort before any side effects.
+    typeset -f __cc_die >/dev/null 2>&1 || \
+        . "${CC_FUNCTIONS_SH:-$HOME/.claude/cc-functions.sh}" 2>/dev/null
+    typeset -f __cc_die >/dev/null 2>&1 || {
+        printf '[cc] %s: cc helpers unavailable (tried %s); aborting before side effects\n' \
+            'cc-branch' "${CC_FUNCTIONS_SH:-$HOME/.claude/cc-functions.sh}" >&2
+        return 127
+    }
     local task_id="${1:-}"
     local repo_arg="${2:-}"
 
     if [ -z "$task_id" ]; then
-        _cc_die "usage: cc-branch <task-id> [<repo-path>]"
+        __cc_die "usage: cc-branch <task-id> [<repo-path>]"
         return 1
     fi
 
     if ! [[ "$task_id" =~ ^[a-zA-Z0-9_./-]+$ ]]; then
-        _cc_die "task_id may only contain [a-zA-Z0-9_./-] (got: $task_id)"
+        __cc_die "task_id may only contain [a-zA-Z0-9_./-] (got: $task_id)"
         return 1
     fi
 
     if ! command -v tmux >/dev/null 2>&1; then
-        _cc_die "tmux required for cc-branch"
+        __cc_die "tmux required for cc-branch"
         return 1
     fi
 
@@ -325,25 +388,46 @@ cc-branch() {
     local repo_root
     if [ -n "$repo_arg" ]; then
         if [ ! -d "$repo_arg" ]; then
-            _cc_die "repo-path does not exist: $repo_arg"
+            __cc_die "repo-path does not exist: $repo_arg"
             return 1
         fi
         repo_root=$(git -C "$repo_arg" rev-parse --show-toplevel 2>/dev/null) || {
-            _cc_die "repo-path is not a git repo: $repo_arg"
+            __cc_die "repo-path is not a git repo: $repo_arg"
             return 1
         }
     else
-        repo_root=$(_cc_repo_root) || {
-            _cc_die "not in a git repo; pass <repo-path> explicitly"
+        repo_root=$(__cc_repo_root) || {
+            __cc_die "not in a git repo; pass <repo-path> explicitly"
             return 1
         }
     fi
 
     # Parent identity comes from the caller's nearest .cc-mode (the calling
-    # session's). For the EA this returns its own session_id.
+    # session's). For the EA this returns its own session_id. CC_PARENT_ID is an
+    # explicit override for callers that have no .cc-mode above cwd.
+    #
+    # Getting this wrong is quiet and costly. An EMPTY parent_id detaches the
+    # child from the tree: no spawned event, and its completion never reaches a
+    # parent. A STALE repo-root .cc-mode is worse — it yields a non-empty but
+    # WRONG parent, attaching the child to a session that will never see it.
+    # Both used to pass silently, so resolve and then say out loud what we got.
     local mode_data parent_session_id=""
-    if mode_data=$(_cc_read_mode 2>/dev/null); then
+    if mode_data=$(__cc_read_mode 2>/dev/null); then
         parent_session_id=$(printf '%s\n' "$mode_data" | grep '^session_id=' | cut -d= -f2-)
+    fi
+    [ -z "$parent_session_id" ] && parent_session_id="${CC_PARENT_ID:-}"
+
+    local tree_dir="$HOME/vault/20-surface/company/tree/sessions"
+    if [ -z "$parent_session_id" ]; then
+        __cc_log "WARNING: no parent session_id (no .cc-mode above $(pwd), CC_PARENT_ID unset)."
+        __cc_log "         this child will be UNPARENTED — no spawned or completion event"
+        __cc_log "         will reach a parent session. If you meant to spawn from a session,"
+        __cc_log "         run cc-branch from THAT session's directory (do not 'cd' into the"
+        __cc_log "         repo first — pass it as the argument), or export CC_PARENT_ID."
+    elif [ -d "$tree_dir" ] && [ ! -f "$tree_dir/${parent_session_id}.md" ]; then
+        __cc_log "WARNING: parent session_id=$parent_session_id has no tree slot in $tree_dir."
+        __cc_log "         the .cc-mode above $(pwd) is probably STALE, which would attach this"
+        __cc_log "         child to a dead session. Verify before relying on tree linkage."
     fi
 
     # Worktree per child. Mirrors cc-explore's pattern so .cc-mode never
@@ -356,7 +440,7 @@ cc-branch() {
     branch="branch/${task_id}"
 
     if [ -d "$worktree" ]; then
-        _cc_log "worktree already exists at $worktree — reusing"
+        __cc_log "worktree already exists at $worktree — reusing"
     else
         if git -C "$repo_root" show-ref --verify --quiet "refs/heads/${branch}"; then
             git -C "$repo_root" worktree add "$worktree" "$branch" || return 1
@@ -368,57 +452,66 @@ cc-branch() {
     # Child identity: fresh session_id + parent_id from caller. Written to the
     # worktree so the child's session-start reads it via cc-tree-slot-write.sh.
     local child_session_id
-    child_session_id=$(_cc_mint_session_id)
-    _cc_write_mode_file "$worktree" branched "$task_id" "$repo_root" "$child_session_id" "$parent_session_id"
+    child_session_id=$(__cc_mint_session_id)
+    __cc_write_mode_file "$worktree" branched "$task_id" "$repo_root" "$child_session_id" "$parent_session_id"
 
-    _cc_company_tmux_ensure
+    __cc_company_tmux_ensure
 
     local tmux_name window_name
-    tmux_name=$(_cc_company_tmux_session)
+    tmux_name=$(__cc_company_tmux_session)
     window_name="$task_id"
 
     # If a window with this name already exists, warn and refuse.
     if tmux list-windows -t "$tmux_name" -F '#{window_name}' 2>/dev/null | grep -Fxq "$window_name"; then
-        _cc_die "a window named '$window_name' already exists in tmux session '$tmux_name'; pick a different task_id or teleport into the existing window"
+        __cc_die "a window named '$window_name' already exists in tmux session '$tmux_name'; pick a different task_id or teleport into the existing window"
         return 1
     fi
 
-    _cc_log "cc-branch: task=$task_id parent=$parent_session_id child=$child_session_id"
-    _cc_log "          worktree=$worktree"
+    __cc_log "cc-branch: task=$task_id parent=$parent_session_id child=$child_session_id"
+    __cc_log "          worktree=$worktree"
 
     # Branched sessions run with --dangerously-skip-permissions to match the
     # EA: orchestration is impractical when every tool call prompts. Identity
     # travels via the worktree's .cc-mode.
     tmux new-window -d -t "$tmux_name" -n "$window_name" -c "$worktree" "claude --dangerously-skip-permissions"
 
-    _cc_log "branched: tmux window '$window_name' in session '$tmux_name'"
+    __cc_log "branched: tmux window '$window_name' in session '$tmux_name'"
 }
 
 # ---- cc-teleport <task-id> ----
 cc-teleport() {
+    # Snapshot guard — see "why the helpers are named __cc_*" at the top of this
+    # file. Re-source if the helpers are absent; abort before any side effects.
+    typeset -f __cc_die >/dev/null 2>&1 || \
+        . "${CC_FUNCTIONS_SH:-$HOME/.claude/cc-functions.sh}" 2>/dev/null
+    typeset -f __cc_die >/dev/null 2>&1 || {
+        printf '[cc] %s: cc helpers unavailable (tried %s); aborting before side effects\n' \
+            'cc-teleport' "${CC_FUNCTIONS_SH:-$HOME/.claude/cc-functions.sh}" >&2
+        return 127
+    }
     local target="${1:-}"
 
     if [ -z "$target" ]; then
-        _cc_die "usage: cc-teleport <task-id>"
+        __cc_die "usage: cc-teleport <task-id>"
         return 1
     fi
 
     if ! command -v tmux >/dev/null 2>&1; then
-        _cc_die "tmux required for cc-teleport"
+        __cc_die "tmux required for cc-teleport"
         return 1
     fi
 
     local tmux_name
-    tmux_name=$(_cc_company_tmux_session)
+    tmux_name=$(__cc_company_tmux_session)
 
-    if ! _cc_company_tmux_exists; then
-        _cc_die "no company tmux session running; launch with: cc"
+    if ! __cc_company_tmux_exists; then
+        __cc_die "no company tmux session running; launch with: cc"
         return 1
     fi
 
     # Confirm window exists.
     if ! tmux list-windows -t "$tmux_name" -F '#{window_name}' 2>/dev/null | grep -Fxq "$target"; then
-        _cc_die "no window named '$target' in tmux session '$tmux_name'; list with: tmux list-windows -t $tmux_name"
+        __cc_die "no window named '$target' in tmux session '$tmux_name'; list with: tmux list-windows -t $tmux_name"
         return 1
     fi
 
@@ -432,13 +525,22 @@ cc-teleport() {
 
 # ---- cc-doctor (delegates to script) ----
 cc-doctor() {
+    # Snapshot guard — see "why the helpers are named __cc_*" at the top of this
+    # file. Re-source if the helpers are absent; abort before any side effects.
+    typeset -f __cc_die >/dev/null 2>&1 || \
+        . "${CC_FUNCTIONS_SH:-$HOME/.claude/cc-functions.sh}" 2>/dev/null
+    typeset -f __cc_die >/dev/null 2>&1 || {
+        printf '[cc] %s: cc helpers unavailable (tried %s); aborting before side effects\n' \
+            'cc-doctor' "${CC_FUNCTIONS_SH:-$HOME/.claude/cc-functions.sh}" >&2
+        return 127
+    }
     bash ~/environment-foundation/software/development/claude-code/scripts/doctor.sh "$@"
 }
 
 # ---- export to subshells ----
-# Public wrappers depend on internal _cc_* helpers; export both so subshells
-# (e.g. `bash -c 'cc-explore foo'`) don't fail with "_cc_repo_root: not found".
-export -f _cc_color_or_plain _cc_die _cc_log _cc_repo_root _cc_mint_session_id _cc_write_mode_file _cc_write_sandbox_settings \
-          _cc_read_mode _cc_find_sandbox_settings \
-          _cc_company_tmux_session _cc_company_tmux_exists _cc_company_tmux_ensure \
+# Public wrappers depend on internal __cc_* helpers; export both so subshells
+# (e.g. `bash -c 'cc-explore foo'`) don't fail with "__cc_repo_root: not found".
+export -f __cc_color_or_plain __cc_die __cc_log __cc_repo_root __cc_mint_session_id __cc_write_mode_file __cc_write_sandbox_settings \
+          __cc_read_mode __cc_find_sandbox_settings \
+          __cc_company_tmux_session __cc_company_tmux_exists __cc_company_tmux_ensure \
           cc cc-branch cc-teleport cc-explore cc-build cc-continue cc-doctor 2>/dev/null || true

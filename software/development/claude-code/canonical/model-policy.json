@@ -1,0 +1,41 @@
+{
+  "policy_version": 1,
+  "updated": "2026-08-20",
+  "_comment": [
+    "ROLE -> MODEL POLICY. Portable intent; versioned; no machine-local state.",
+    "",
+    "Every role ships as \"track-latest\" -- a deliberate, legal choice meaning",
+    "'accept Claude Code's Default for this role, and accept that the tier may",
+    "move when the account roster changes'.  THE CEO ASSIGNS REAL TIERS ON MERGE",
+    "REVIEW.  This branch delivers the mechanism; the tier assignments are the",
+    "CEO's decision and are intentionally left unmade.",
+    "",
+    "Legal values for roles.<role>.model:",
+    "  \"track-latest\"                 accept Default; tier may move (recorded as a choice)",
+    "  a tier alias                   opus | sonnet | fable | haiku -- tier pinned, version tracks",
+    "  an exact model id              e.g. claude-opus-5[1m] -- fully pinned",
+    "",
+    "NOTHING model-related may go in canonical/settings.json -- that file is a",
+    "live symlink the app writes back to, so a model key there becomes a phantom",
+    "diff.  scripts/doctor.sh check 10a FAILs on it.  Per-machine pins belong in",
+    "~/.claude/settings.local.json (untracked).",
+    "",
+    "known_models is the change-detection baseline: doctor check 10c WARNs on any",
+    "model in the account roster (~/.claude.json additionalModelOptionsCache) that",
+    "is not listed here.  Adding a model to this list IS the act of deciding that",
+    "track-latest still applies to it."
+  ],
+  "roles": {
+    "ea":               { "model": "track-latest", "note": "command-center / EA session (cc)" },
+    "branched-worker":  { "model": "track-latest", "note": "cc-branch children" },
+    "explore":          { "model": "track-latest", "note": "cc-explore" },
+    "build":            { "model": "track-latest", "note": "cc-build" },
+    "review-lane":      { "model": "track-latest", "note": "Workflow verify/judge lanes -- not yet mechanized" },
+    "cheap-mechanical": { "model": "track-latest", "note": "bulk mechanical Workflow stages -- not yet mechanized" },
+    "subagent-default": { "model": "track-latest", "note": "in-process Agent tool -- not yet mechanized" },
+    "scheduled":        { "model": "track-latest", "note": "cron / cloud agents -- not yet mechanized" }
+  },
+  "known_models": [
+    "claude-fable-5[1m]"
+  ]
+}

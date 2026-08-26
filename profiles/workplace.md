@@ -21,3 +21,5 @@ Work machine setup: development tools only. No gaming software.
 - [ ] [Claude Code — configure](../software/development/claude-code/scripts/configure.sh) `[dev]`
 - [ ] [Docker — install](../software/development/docker/scripts/install.sh) `[dev]`
 - [ ] [Docker — configure](../software/development/docker/scripts/configure.sh) `[dev]`
+- [ ] [LaTeX — install](../software/development/latex/scripts/install.sh) `[dev]` — pdflatex + latexmk for reports and specifications; large download
+- [ ] [LaTeX — verify](../software/development/latex/scripts/verify.sh) `[dev]`

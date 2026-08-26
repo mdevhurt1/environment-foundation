@@ -27,6 +27,8 @@ Run all baseline steps in order:
 - [ ] [Claude Code — configure](../software/development/claude-code/scripts/configure.sh) `[dev]`
 - [ ] [Docker — install](../software/development/docker/scripts/install.sh) `[dev]`
 - [ ] [Docker — configure](../software/development/docker/scripts/configure.sh) `[dev]`
+- [ ] [LaTeX — install](../software/development/latex/scripts/install.sh) `[dev]` — pdflatex + latexmk for article-class documents; large download
+- [ ] [LaTeX — verify](../software/development/latex/scripts/verify.sh) `[dev]`
 - [ ] [Plane — verify](../software/development/claude-code/integrations/plane/README.md) `[workstation]` — read-only check; run after Claude Code configure and `environment-secrets/install.sh`
 
 ### 3. System

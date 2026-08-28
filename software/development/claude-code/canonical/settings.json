@@ -22,7 +22,7 @@
       "Read(//tmp/**)",
       "Read(//usr/local/bin/**)"
     ],
-    "defaultMode": "default"
+    "defaultMode": "auto"
   },
   "hooks": {
     "SessionStart": [

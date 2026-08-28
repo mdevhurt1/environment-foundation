@@ -11,6 +11,11 @@
 # so the user's existing sandbox.network.* allowlist is preserved.
 # The settings file lives inside the worktree so it is cleaned up automatically
 # when the worktree is removed.
+#
+# Permission mode: the wrappers pass NO permission flag unless one was actually
+# asked for ($CC_PERM_MODE, or roles.<role>.permission_mode in the model policy).
+# Absent an override, settings.json permissions.defaultMode governs. See the
+# "permission mode" helper block below for why a wrapper must not out-vote it.
 
 # ---- why the helpers are named __cc_* (double underscore) ----
 # Claude Code's Bash tool does not re-run your rc files. It restores shell state
@@ -156,6 +161,200 @@ __cc_model_flag_str() {
     printf ' %q' "${__cc_model_args[@]}"
 }
 
+# ---- permission mode ----
+# Resolution order, mirroring the model policy above:
+#   1. $CC_PERM_MODE                       explicit override for one launch
+#   2. policy roles.<role>.permission_mode a recorded per-role choice
+#   3. nothing                             settings.json permissions.defaultMode
+#                                          governs; NO flag is passed
+#
+# Step 3 is the steady state and the whole point. The wrappers used to append
+# --dangerously-skip-permissions unconditionally, which silently overrode
+# settings.json permissions.defaultMode -- a versioned, reviewed, checked-in
+# choice -- for every session the company launches. A wrapper must not out-vote
+# the settings file; it may only carry an override someone actually stated.
+#
+# NOTE the deliberate asymmetry with __cc_resolve_model, which REFUSES when it
+# cannot resolve. That refusal exists because Claude Code's "Default" model is a
+# moving referent: falling through to it is an accident that costs money.
+# Permission mode has no such hazard -- falling through lands on an explicit
+# value in a tracked file, which is the intended outcome, not a silent default.
+# So a missing policy, a missing role, or a missing jq are all NON-fatal here;
+# only an explicitly stated but INVALID value is fatal.
+__cc_resolve_perm() {
+    local role="$1" policy mode=""
+    if [ -n "${CC_PERM_MODE:-}" ]; then
+        printf '%s\t%s\n' "$CC_PERM_MODE" "env"
+        return 0
+    fi
+    if command -v jq >/dev/null 2>&1 && policy=$(__cc_model_policy_path); then
+        mode=$(jq -r --arg r "$role" '.roles[$r].permission_mode // empty' "$policy" 2>/dev/null)
+    fi
+    if [ -n "$mode" ]; then
+        printf '%s\t%s\n' "$mode" "policy:$role"
+        return 0
+    fi
+    printf '\t%s\n' "settings-default"
+}
+
+# Permission modes the INSTALLED claude accepts, space-separated. Parsed from
+# --help (~0.2s, and only on the override path) rather than hardcoded, because
+# this list has already changed shape once -- 2.1.236 offers "manual" and
+# "dontAsk" that older docs do not, and rejects "Default". A stale hardcoded
+# list refuses a value that works, or worse admits one that does not and kills
+# claude inside a fresh tmux window: exactly the half-spawn the __cc_* rename
+# was introduced to prevent. The static list is only a fallback for a --help
+# that cannot be read or parsed.
+__cc_perm_modes() {
+    local parsed
+    parsed=$(claude --help 2>/dev/null | tr '\n' ' ' \
+        | grep -o 'permission-mode <mode>[^)]*)' \
+        | grep -o '"[a-zA-Z]*"' | tr -d '"' | tr '\n' ' ')
+    if [ -n "$parsed" ]; then
+        printf '%s\n' "$parsed"
+    else
+        printf '%s\n' "acceptEdits auto bypassPermissions manual dontAsk plan"
+    fi
+}
+
+# __cc_perm_stage <value> <source> -- stage an already-resolved permission mode.
+# Sets, in the CALLER's scope: __cc_perm_value, __cc_perm_source, and the array
+# __cc_perm_args (EMPTY for the settings-default path, else:
+# --permission-mode <value>). Callers must declare all three `local` first.
+# Returns 1 on refusal, having produced no side effects.
+__cc_perm_stage() {
+    local valid
+    __cc_perm_value="$1"
+    __cc_perm_source="$2"
+    if [ -z "$__cc_perm_value" ]; then
+        __cc_perm_args=()
+        __cc_log "perm-mode: settings-default (no flag; settings.json permissions.defaultMode governs)"
+        return 0
+    fi
+    valid=$(__cc_perm_modes)
+    case " $valid " in
+        *" $__cc_perm_value "*) ;;
+        *)
+            __cc_die "not a permission mode this claude accepts: '$__cc_perm_value' (source=$__cc_perm_source)"
+            __cc_log "  accepted: $valid"
+            __cc_log "  fix: correct \$CC_PERM_MODE, or roles.<role>.permission_mode in the policy"
+            __cc_log "  or drop the override entirely to fall back to settings.json"
+            __cc_log "     permissions.defaultMode, which is the intended steady state"
+            return 1
+            ;;
+    esac
+    __cc_perm_args=(--permission-mode "$__cc_perm_value")
+    __cc_log "perm-mode: $__cc_perm_value (source=$__cc_perm_source)"
+}
+
+# __cc_perm_prepare <role> -- resolve the role and stage the launch. Same
+# contract as __cc_model_prepare, and called from the same place: BEFORE any
+# worktree, branch or tmux window exists, so a refusal leaves nothing behind.
+__cc_perm_prepare() {
+    local spec
+    spec=$(__cc_resolve_perm "$1")
+    __cc_perm_stage "${spec%%$'\t'*}" "${spec##*$'\t'}"
+}
+
+# Render __cc_perm_args as a shell-quoted fragment for the tmux command STRING
+# used by cc / cc-branch. Prints the empty string on the settings-default path.
+__cc_perm_flag_str() {
+    [ "${#__cc_perm_args[@]}" -gt 0 ] || return 0
+    printf ' %q' "${__cc_perm_args[@]}"
+}
+
+# ---- workspace trust ----
+# Claude Code refuses to touch a workspace it has not been told to trust, and
+# asks interactively on first use. Measured on 2.1.236: the dialog appears for a
+# never-trusted directory under EVERY permission mode -- plain, --permission-mode
+# bypassPermissions AND --dangerously-skip-permissions. The bypass flag never
+# suppressed it; what suppressed it was that most launch directories had already
+# been trusted by hand. Every cc-branch/cc-explore worktree is brand new, so an
+# unattended child would sit on that dialog forever.
+#
+# Trust lives in ~/.claude.json as projects["<abs path>"].hasTrustDialogAccepted.
+# Setting it directly is the route Claude Code itself names in its own untrusted-
+# workspace error ("...or set projects[<path>].hasTrustDialogAccepted: true in
+# <config>"), so this is a documented seam, not a poke at private state.
+#
+# TRADEOFF, on the record: ~/.claude.json is owned and rewritten by every running
+# claude process, with no lock file of its own -- concurrent writes are already
+# last-writer-wins between claude's own sessions. These helpers add one more
+# writer. They keep the exposure as small as it can be made from outside: they
+# do nothing at all when trust is already effective (the steady state after the
+# first launch in a worktree), they serialise our own writes with flock, they
+# build the new file in the same directory and land it with an atomic rename,
+# and they verify the rewritten JSON parses and carries the intended key before
+# replacing anything. Every failure path WARNs and returns 0 -- a session that
+# stops on a trust dialog is recoverable by a human, a clobbered ~/.claude.json
+# is not, and neither is worth aborting an otherwise good spawn over.
+
+# __cc_trust_effective <dir> -- 0 if claude would already consider dir trusted.
+# Mirrors claude's own check: walk from dir upward, stopping at the enclosing
+# git repo root (a worktree's root is the worktree itself, which is why trusting
+# ~/ does not cover ~/repo-branch-foo), and accept the first hasTrustDialogAccepted.
+__cc_trust_effective() {
+    local dir="$1" root node parent
+    root=$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null)
+    [ -n "$root" ] && root=$(cd "$root" 2>/dev/null && pwd -P)
+    node="$dir"
+    while :; do
+        if [ "$(jq -r --arg p "$node" '.projects[$p].hasTrustDialogAccepted // false' \
+                "$HOME/.claude.json" 2>/dev/null)" = "true" ]; then
+            return 0
+        fi
+        [ -n "$root" ] && [ "$node" = "$root" ] && return 1
+        parent=$(dirname "$node")
+        [ "$parent" = "$node" ] && return 1
+        node="$parent"
+    done
+}
+
+# __cc_trust_register <dir> -- pre-register folder trust for a directory this
+# wrapper just created, so the spawn reaches its prompt unattended. Never fatal.
+__cc_trust_register() {
+    local dir cfg tmp rc
+    dir=$(cd "$1" 2>/dev/null && pwd -P) || {
+        __cc_log "WARNING: trust: cannot resolve directory '$1'; skipping pre-registration"
+        return 0
+    }
+    cfg="$HOME/.claude.json"
+    if ! command -v jq >/dev/null 2>&1; then
+        __cc_log "WARNING: trust: jq not installed; cannot pre-register $dir"
+        __cc_log "         this session will stop on the workspace trust dialog until answered"
+        return 0
+    fi
+    if [ ! -f "$cfg" ]; then
+        __cc_log "WARNING: trust: $cfg not found; skipping pre-registration"
+        return 0
+    fi
+    __cc_trust_effective "$dir" && return 0
+
+    tmp=$(mktemp "$cfg.cc-trust.XXXXXX" 2>/dev/null) || {
+        __cc_log "WARNING: trust: could not create a temp file beside $cfg; skipping"
+        return 0
+    }
+    (
+        flock 9 2>/dev/null
+        jq --arg p "$dir" \
+           '.projects[$p] = ((.projects[$p] // {}) + {hasTrustDialogAccepted: true})' \
+           "$cfg" > "$tmp" 2>/dev/null || exit 3
+        # Re-read the candidate: this proves it is parseable JSON AND carries the
+        # intent, so a truncated or half-written file can never replace the real one.
+        [ "$(jq -r --arg p "$dir" '.projects[$p].hasTrustDialogAccepted // false' "$tmp" 2>/dev/null)" = "true" ] || exit 3
+        chmod 600 "$tmp" 2>/dev/null
+        mv -f "$tmp" "$cfg" || exit 3
+    ) 9>"$HOME/.claude.json.cc-lock"
+    rc=$?
+    rm -f "$tmp" 2>/dev/null
+    if [ "$rc" -ne 0 ]; then
+        __cc_log "WARNING: trust: could not pre-register $dir in $cfg"
+        __cc_log "         this session will stop on the workspace trust dialog until answered"
+        return 0
+    fi
+    __cc_log "trust: pre-registered $dir (workspace trust dialog suppressed)"
+}
+
 # ---- company tmux helpers ----
 __cc_company_tmux_session() {
     # Single point of truth for the company tmux session name.
@@ -185,16 +384,22 @@ __cc_write_mode_file() {
     # $1 = directory, $2 = mode, $3 = slug, $4 = parent_repo,
     # $5 = session_id, $6 = parent_id (may be empty for top-level launches),
     # $7 = model (resolved value: track-latest | tier alias | exact id),
-    # $8 = model_source (env | policy:<role>)
+    # $8 = model_source (env | policy:<role>),
+    # $9 = perm_mode (the --permission-mode value, or EMPTY for the
+    #      settings-default path -- empty is a legal, expected value here),
+    # $10 = perm_mode_source (env | policy:<role> | settings-default)
     # Scrub newlines and '=' from session_id/parent_id at the write boundary
     # so a malformed CC_PARENT_ID cannot inject extra .cc-mode keys. model and
     # model_source are scrubbed of whitespace as well: the statusline SOURCES
     # this file, so a value containing a space would break its shell parse.
-    local _sid _pid _model _msrc
+    # perm_mode/perm_mode_source get the same treatment for the same reason.
+    local _sid _pid _model _msrc _perm _psrc
     _sid=$(printf '%s' "$5" | tr -d '\n=')
     _pid=$(printf '%s' "${6:-}" | tr -d '\n=')
     _model=$(printf '%s' "${7:-}" | tr -d "\n= \t")
     _msrc=$(printf '%s' "${8:-}" | tr -d "\n= \t")
+    _perm=$(printf '%s' "${9:-}" | tr -d "\n= \t")
+    _psrc=$(printf '%s' "${10:-}" | tr -d "\n= \t")
     cat > "$1/.cc-mode" <<EOF
 mode=$2
 slug=$3
@@ -204,6 +409,8 @@ session_id=$_sid
 parent_id=$_pid
 model=$_model
 model_source=$_msrc
+perm_mode=$_perm
+perm_mode_source=$_psrc
 EOF
 }
 
@@ -280,6 +487,12 @@ cc-explore() {
     local -a __cc_model_args
     __cc_model_prepare explore || return 1
 
+    # Same rule for the permission mode: resolve (and refuse an invalid value)
+    # before anything exists on disk.
+    local __cc_perm_value __cc_perm_source
+    local -a __cc_perm_args
+    __cc_perm_prepare explore || return 1
+
     if [ -d "$worktree" ]; then
         __cc_log "worktree already exists at $worktree — reusing"
     else
@@ -295,8 +508,13 @@ cc-explore() {
     session_id=$(__cc_mint_session_id)
 
     __cc_write_mode_file "$worktree" exploration "$slug" "$repo_root" "$session_id" "${CC_PARENT_ID:-}" \
-        "$__cc_model_value" "$__cc_model_source"
+        "$__cc_model_value" "$__cc_model_source" "$__cc_perm_value" "$__cc_perm_source"
     __cc_write_sandbox_settings "$worktree"
+
+    # The worktree is brand new, so claude has never been told to trust it. Do
+    # that now: without a permission flag suppressing nothing, the launch would
+    # otherwise stop on the workspace trust dialog. Never fatal.
+    __cc_trust_register "$worktree"
 
     __cc_log "EXPLORE mode: sandboxed (--settings), branch=$branch, worktree=$worktree"
     cd "$worktree" || return 1
@@ -306,7 +524,7 @@ cc-explore() {
     # turn the NEXT session's /start into a hard failure. Same reason the
     # ANTHROPIC_MODEL/tmux-setenv route was rejected: env state that survives
     # the process leaks into every later spawn.
-    CC_SESSION_ID="$session_id" claude "${__cc_model_args[@]}" --settings "$worktree/.cc-sandbox-settings.json"
+    CC_SESSION_ID="$session_id" claude "${__cc_model_args[@]}" "${__cc_perm_args[@]}" --settings "$worktree/.cc-sandbox-settings.json"
 }
 
 # ---- cc-build ----
@@ -351,16 +569,23 @@ cc-build() {
     local -a __cc_model_args
     __cc_model_prepare build || return 1
 
+    local __cc_perm_value __cc_perm_source
+    local -a __cc_perm_args
+    __cc_perm_prepare build || return 1
+
     __cc_write_mode_file "$repo_root" build "${repo_name}" "$repo_root" "$session_id" "${CC_PARENT_ID:-}" \
-        "$__cc_model_value" "$__cc_model_source"
-    __cc_log "BUILD mode: full perms, no prompts"
+        "$__cc_model_value" "$__cc_model_source" "$__cc_perm_value" "$__cc_perm_source"
+    # No trust pre-registration here: cc-build runs in the MAIN worktree the
+    # operator is already sitting in, which is trusted by the time they can type
+    # this. Only the wrappers that CREATE a directory need to vouch for it.
+    __cc_log "BUILD mode: main worktree, plan/spec present"
     # CC_SESSION_ID is a per-command PREFIX, never an export. The tree-slot
     # helpers treat it as an ASSERTION and refuse (exit 3) when it disagrees
     # with the resolved .cc-mode, so a value that outlived this launch would
     # turn the NEXT session's /start into a hard failure. Same reason the
     # ANTHROPIC_MODEL/tmux-setenv route was rejected: env state that survives
     # the process leaks into every later spawn.
-    CC_SESSION_ID="$session_id" claude "${__cc_model_args[@]}" --dangerously-skip-permissions
+    CC_SESSION_ID="$session_id" claude "${__cc_model_args[@]}" "${__cc_perm_args[@]}"
 }
 
 # ---- cc-continue ----
@@ -390,6 +615,7 @@ cc-continue() {
     # Parse .cc-mode into local vars — do NOT export; exporting leaks into the
     # caller's interactive shell and poisons the next claude invocation.
     local mode="" slug="" started_at="" parent_repo="" session_id="" model="" model_source=""
+    local perm_mode="" perm_mode_source=""
     while IFS='=' read -r key val; do
         case "$key" in
             mode)         mode="$val" ;;
@@ -399,6 +625,8 @@ cc-continue() {
             session_id)   session_id="$val" ;;
             model)        model="$val" ;;
             model_source) model_source="$val" ;;
+            perm_mode)        perm_mode="$val" ;;
+            perm_mode_source) perm_mode_source="$val" ;;
         esac
     done <<< "$mode_data"
 
@@ -430,6 +658,37 @@ cc-continue() {
         __cc_model_prepare "$__cc_role" || return 1
     fi
 
+    # Permission mode on resume. Order differs from the model's ON PURPOSE:
+    # $CC_PERM_MODE wins even here. The model is pinned to the .cc-mode stamp
+    # because the session's CONTEXT was built by that model and swapping it
+    # mid-history is a real change; a permission mode carries no such
+    # continuity -- it only governs what the next turn is allowed to do -- so
+    # the stated override is allowed to apply to a resume as well.
+    # Absent the env var the stamp replays, so a session deliberately launched
+    # under an override does not quietly drop back to the settings default.
+    # A .cc-mode written before this stamp existed has NO perm_mode_source line
+    # at all, which is what distinguishes it from a stamped settings-default
+    # (perm_mode empty, perm_mode_source=settings-default); that one resolves by
+    # role instead. The stamp is validated on replay too -- a hand-edited
+    # .cc-mode must not be able to kill the resumed session at launch.
+    local __cc_perm_value __cc_perm_source
+    local -a __cc_perm_args
+    if [ -n "${CC_PERM_MODE:-}" ]; then
+        __cc_perm_stage "$CC_PERM_MODE" "env" || return 1
+    elif [ -n "$perm_mode_source" ]; then
+        __cc_perm_stage "$perm_mode" "$perm_mode_source, from .cc-mode" || return 1
+    else
+        local __cc_perm_role
+        case "${mode:-}" in
+            exploration) __cc_perm_role=explore ;;
+            build)       __cc_perm_role=build ;;
+            branched)    __cc_perm_role=branched-worker ;;
+            *)           __cc_perm_role=explore ;;
+        esac
+        __cc_log "no perm-mode stamp in .cc-mode (pre-policy session); resolving role $__cc_perm_role"
+        __cc_perm_prepare "$__cc_perm_role" || return 1
+    fi
+
     case "${mode:-}" in
         exploration)
             __cc_log "CONTINUE (was EXPLORE: slug=${slug:-?}, started=${started_at:-?})"
@@ -437,18 +696,20 @@ cc-continue() {
             local sandbox_settings
             if sandbox_settings=$(__cc_find_sandbox_settings); then
                 __cc_log "sandbox settings: $sandbox_settings"
-                CC_SESSION_ID="$session_id" claude "${__cc_model_args[@]}" --continue --settings "$sandbox_settings"
+                CC_SESSION_ID="$session_id" claude "${__cc_model_args[@]}" "${__cc_perm_args[@]}" --continue --settings "$sandbox_settings"
             else
                 # Settings file missing (e.g. deleted manually); recreate in cwd.
                 __cc_write_sandbox_settings "$(pwd)"
                 __cc_log "sandbox settings recreated at $(pwd)/.cc-sandbox-settings.json"
-                CC_SESSION_ID="$session_id" claude "${__cc_model_args[@]}" --continue --settings "$(pwd)/.cc-sandbox-settings.json"
+                CC_SESSION_ID="$session_id" claude "${__cc_model_args[@]}" "${__cc_perm_args[@]}" --continue --settings "$(pwd)/.cc-sandbox-settings.json"
             fi
             ;;
         build)
-            # Always confirm before resuming build mode — stale .cc-mode with
-            # --dangerously-skip-permissions is a real footgun.
-            printf '\033[01;33m[cc] CONTINUE in BUILD mode (full perms, no prompts):\033[00m\n' >&2
+            # Always confirm before resuming build mode — resuming a stale
+            # .cc-mode under a permissive mode is a real footgun. Show the mode
+            # that was actually resolved rather than asserting a fixed one.
+            printf '\033[01;33m[cc] CONTINUE in BUILD mode (perm-mode: %s):\033[00m\n' \
+                "${__cc_perm_value:-settings-default}" >&2
             printf '     started_at: %s\n     parent_repo: %s\n' "${started_at:-?}" "${parent_repo:-?}" >&2
             printf '     Continue? [y/N] ' >&2
             read -r confirm
@@ -457,7 +718,7 @@ cc-continue() {
                 *) __cc_die "cc-continue cancelled"; return 1 ;;
             esac
             __cc_log "CONTINUE (was BUILD)"
-            CC_SESSION_ID="$session_id" claude "${__cc_model_args[@]}" --dangerously-skip-permissions --continue
+            CC_SESSION_ID="$session_id" claude "${__cc_model_args[@]}" "${__cc_perm_args[@]}" --continue
             ;;
         *)
             __cc_die "unknown mode in .cc-mode: ${mode:-<empty>}"
@@ -467,8 +728,9 @@ cc-continue() {
 }
 
 # ---- cc (no args — command center launcher) ----
-# NOTE: --dangerously-skip-permissions is intentional here; see spec §4.3
-# for the "known gap" acceptance. Closes when Phase 5 sandbox profiles land.
+# The EA used to be launched with a hardcoded --dangerously-skip-permissions
+# (spec §4.3 "known gap"). It now resolves role "ea" like everything else, so
+# settings.json permissions.defaultMode governs unless someone states otherwise.
 cc() {
     # Snapshot guard — see "why the helpers are named __cc_*" at the top of this
     # file. Re-source if the helpers are absent; abort before any side effects.
@@ -513,30 +775,36 @@ cc() {
     local -a __cc_model_args
     __cc_model_prepare ea || return 1
 
+    local __cc_perm_value __cc_perm_source
+    local -a __cc_perm_args
+    __cc_perm_prepare ea || return 1
+
     __cc_write_mode_file "$cc_workspace" command-center cc "$cc_workspace" "$session_id" "" \
-        "$__cc_model_value" "$__cc_model_source"
+        "$__cc_model_value" "$__cc_model_source" "$__cc_perm_value" "$__cc_perm_source"
 
     __cc_log "COMMAND CENTER: session_id=$session_id model=$__cc_model_value ($__cc_model_source)"
 
     # Create tmux session with first window in the CC workspace running claude.
-    # The EA orchestrates from a trusted workspace and would prompt-thrash
-    # without --dangerously-skip-permissions.
     #
-    # tmux takes a command STRING, so the model flag is rendered with %q rather
-    # than passed as an argv array. CC_SESSION_ID goes in as a per-command
-    # prefix inside that string -- NOT via `tmux new-session -e`, which would
-    # put it in the tmux session environment and leak it into every window
-    # created later, including every cc-branch child.
-    local model_flag
+    # tmux takes a command STRING, so the model and permission flags are
+    # rendered with %q rather than passed as an argv array. CC_SESSION_ID goes
+    # in as a per-command prefix inside that string -- NOT via
+    # `tmux new-session -e`, which would put it in the tmux session environment
+    # and leak it into every window created later, including every cc-branch
+    # child.
+    local model_flag perm_flag
     model_flag=$(__cc_model_flag_str)
+    perm_flag=$(__cc_perm_flag_str)
     tmux new-session -d -s "$tmux_name" -n "cc" -c "$cc_workspace" \
-        "CC_SESSION_ID=$(printf '%q' "$session_id") claude${model_flag} --dangerously-skip-permissions"
+        "CC_SESSION_ID=$(printf '%q' "$session_id") claude${model_flag}${perm_flag}"
     tmux attach-session -t "$tmux_name"
 }
 
 # ---- cc-branch <task-id> [<repo-path>] ----
-# NOTE: --dangerously-skip-permissions is intentional here; see spec §4.3
-# for the "known gap" acceptance. Closes when Phase 5 sandbox profiles land.
+# Children used to be launched with a hardcoded --dangerously-skip-permissions
+# (spec §4.3 "known gap"), which silently out-voted settings.json
+# permissions.defaultMode for every task this company delegates. They now
+# resolve role "branched-worker" like everything else.
 cc-branch() {
     # Snapshot guard — see "why the helpers are named __cc_*" at the top of this
     # file. Re-source if the helpers are absent; abort before any side effects.
@@ -596,6 +864,14 @@ cc-branch() {
     local -a __cc_model_args
     __cc_model_prepare branched-worker || return 1
 
+    # Permission mode, resolved under the same before-any-side-effect rule.
+    # Override one spawn with:  CC_PERM_MODE=bypassPermissions cc-branch <task-id>
+    # which lands in the child's .cc-mode as perm_mode_source=env, so an
+    # override is as visible in the tree as a policy choice is.
+    local __cc_perm_value __cc_perm_source
+    local -a __cc_perm_args
+    __cc_perm_prepare branched-worker || return 1
+
     # Parent identity comes from the caller's nearest .cc-mode (the calling
     # session's). For the EA this returns its own session_id. CC_PARENT_ID is an
     # explicit override for callers that have no .cc-mode above cwd.
@@ -649,7 +925,12 @@ cc-branch() {
     child_session_id=$(__cc_mint_session_id)
 
     __cc_write_mode_file "$worktree" branched "$task_id" "$repo_root" "$child_session_id" "$parent_session_id" \
-        "$__cc_model_value" "$__cc_model_source"
+        "$__cc_model_value" "$__cc_model_source" "$__cc_perm_value" "$__cc_perm_source"
+
+    # A cc-branch child is autonomous by construction: nobody is watching its
+    # pane when it starts. Vouch for the worktree we just created so it cannot
+    # stall on the workspace trust dialog. Never fatal.
+    __cc_trust_register "$worktree"
 
     __cc_company_tmux_ensure
 
@@ -666,19 +947,19 @@ cc-branch() {
     __cc_log "cc-branch: task=$task_id parent=$parent_session_id child=$child_session_id"
     __cc_log "          worktree=$worktree"
     __cc_log "          model=$__cc_model_value ($__cc_model_source)"
+    __cc_log "          perm-mode=${__cc_perm_value:-settings-default} ($__cc_perm_source)"
 
-    # Branched sessions run with --dangerously-skip-permissions to match the
-    # EA: orchestration is impractical when every tool call prompts. Identity
-    # travels via the worktree's .cc-mode.
+    # Identity travels via the worktree's .cc-mode.
     #
     # CC_SESSION_ID carries the CHILD's id (not the parent's) and is a
     # per-command prefix inside the tmux command string -- never `new-window
     # -e`, which would write it into the tmux session environment where the
     # next window would inherit a stale id and be refused exit 3.
-    local model_flag
+    local model_flag perm_flag
     model_flag=$(__cc_model_flag_str)
+    perm_flag=$(__cc_perm_flag_str)
     tmux new-window -d -t "$tmux_name" -n "$window_name" -c "$worktree" \
-        "CC_SESSION_ID=$(printf '%q' "$child_session_id") claude${model_flag} --dangerously-skip-permissions"
+        "CC_SESSION_ID=$(printf '%q' "$child_session_id") claude${model_flag}${perm_flag}"
 
     __cc_log "branched: tmux window '$window_name' in session '$tmux_name'"
 }
@@ -748,5 +1029,7 @@ cc-doctor() {
 export -f __cc_color_or_plain __cc_die __cc_log __cc_repo_root __cc_mint_session_id __cc_write_mode_file __cc_write_sandbox_settings \
           __cc_read_mode __cc_find_sandbox_settings \
           __cc_model_policy_path __cc_resolve_model __cc_model_prepare __cc_model_flag_str \
+          __cc_resolve_perm __cc_perm_modes __cc_perm_stage __cc_perm_prepare __cc_perm_flag_str \
+          __cc_trust_effective __cc_trust_register \
           __cc_company_tmux_session __cc_company_tmux_exists __cc_company_tmux_ensure \
           cc cc-branch cc-teleport cc-explore cc-build cc-continue cc-doctor 2>/dev/null || true

@@ -67,7 +67,7 @@ Verify: `cc-doctor`
 | Command | Mode | When |
 |---|---|---|
 | `cc-explore <slug>` | sandbox + git worktree + strict perms | research, debug, brainstorm |
-| `cc-build` | full perms, main worktree (requires plan) | execute approved plan |
+| `cc-build` | main worktree, requires a plan/spec | execute approved plan |
 | `cc-continue [name]` | inherits original mode from `.cc-mode` | resume a worktree/session |
 | `cc-branch <task-id> [<repo>]` | branched worker in its own worktree + tmux window | delegate a task from the EA |
 | `cc-doctor` | n/a | verify install, detect drift |
@@ -75,6 +75,55 @@ Verify: `cc-doctor`
 Direct `claude` invocation still works but is non-SOP — prefer wrappers.
 Only the wrappers apply the model policy below; a bare `claude` still gets
 Claude Code's Default.
+
+### Permission mode
+
+The wrappers pass **no permission flag** unless someone asked for one. Absent
+an override, `settings.json` `permissions.defaultMode` governs — today `auto`.
+
+They used to append `--dangerously-skip-permissions` to every launch, which
+silently out-voted that setting for the EA and for every task the company
+delegates. A wrapper may carry an override; it may not out-vote a versioned,
+reviewed, checked-in choice. Resolution order, mirroring the model policy:
+
+| Order | Source | Result |
+|---|---|---|
+| 1 | `$CC_PERM_MODE` | `--permission-mode <value>`, recorded as `perm_mode_source=env` |
+| 2 | `roles.<role>.permission_mode` in `canonical/model-policy.json` | `--permission-mode <value>`, recorded as `policy:<role>` |
+| 3 | neither (the steady state) | **no flag**; `settings.json` `permissions.defaultMode` governs |
+
+```bash
+CC_PERM_MODE=bypassPermissions cc-branch <task-id> [<repo-path>]
+```
+
+Valid values are read from `claude --help` at launch rather than hardcoded —
+the list has already changed shape once (2.1.236 offers `manual` and `dontAsk`,
+and rejects `Default`). An unknown value is **refused before any worktree,
+branch or tmux window is created**, the same before-any-side-effect rule the
+model resolver follows.
+
+The asymmetry with the model policy is deliberate: a missing policy, role or
+`jq` is **not** fatal here. `__cc_resolve_model` refuses because Default is a
+moving referent and falling through to it costs money silently; falling through
+on permission mode lands on an explicit value in a tracked file, which is the
+outcome we want.
+
+`.cc-mode` and the tree slot carry `perm_mode` / `perm_mode_source`, so an
+override is as visible in the tree as a model choice is. On the settings-default
+path `perm_mode` is empty and `perm_mode_source=settings-default`.
+
+**Workspace trust.** Claude Code asks interactively before touching a directory
+it has not been told to trust, and — measured on 2.1.236 — it asks under *every*
+permission mode, `--dangerously-skip-permissions` included. The bypass flag was
+never what suppressed that dialog; what suppressed it was that most launch
+directories had already been trusted by hand. Every `cc-branch` / `cc-explore`
+worktree is brand new, so an unattended child would sit on the dialog forever.
+Both wrappers therefore pre-register the worktree they just created by setting
+`projects["<path>"].hasTrustDialogAccepted` in `~/.claude.json` — the remedy
+Claude Code itself names in its untrusted-workspace error. It is skipped when
+trust is already effective, serialised with `flock`, landed with an atomic
+rename, and **never fatal**: a session stopped on a trust dialog is recoverable
+by a human, a clobbered `~/.claude.json` is not.
 
 ### Model policy
 

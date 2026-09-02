@@ -82,6 +82,11 @@ link "$CANONICAL/shell/cc-tree-slot-update.sh" "$CLAUDE_DIR/cc-tree-slot-update.
 # Ring-maintenance scanner, invoked from the ring-maintenance skill (Phase 1).
 link "$CANONICAL/shell/cc-ring-scan.sh" "$CLAUDE_DIR/cc-ring-scan.sh"
 
+# SessionStart injector for the vendored `using-superpowers` skill. Replaces the
+# superpowers plugin's own hook, which we lost when the plugin was disabled over
+# the brainstorming/writing-plans name collision. Registered in settings.json.
+link "$CANONICAL/shell/cc-skills-inject.sh" "$CLAUDE_DIR/cc-skills-inject.sh"
+
 # ---- ~/.bashrc source line (idempotent) ----
 SOURCE_LINE='[ -f ~/.claude/cc-functions.sh ] && source ~/.claude/cc-functions.sh'
 if ! grep -Fxq "$SOURCE_LINE" "$HOME/.bashrc" 2>/dev/null; then

@@ -5,7 +5,6 @@
       "Bash(echo:*)",
       "Bash(test:*)",
       "Bash(command:*)",
-      "Bash(ssh:*)",
       "Bash(scp:*)",
       "Bash(curl:*)",
       "Bash(git add:*)",
@@ -17,7 +16,6 @@
       "Bash(git -C * log *)",
       "Bash(git -C * diff *)",
       "Bash(git ls-tree *)",
-      "Bash(python -m pytest:*)",
       "Read(//home/*)",
       "Read(//tmp/**)",
       "Read(//usr/local/bin/**)"
@@ -69,5 +67,33 @@
   "preferredNotifChannel": "auto",
   "remoteControlAtStartup": true,
   "inputNeededNotifEnabled": true,
-  "agentPushNotifEnabled": true
+  "agentPushNotifEnabled": true,
+  "autoMode": {
+    "environment": [
+      "### Org-wide",
+      "**Organization**: None configured",
+      "**Cloud provider(s)**: None configured",
+      "**Repository visibility**: this repo (environment-foundation) has a remote at github.com/mdevhurt1/environment-foundation and GitHub reports it PUBLIC — treat every commit here as publication. For any other repo, assume private unless the remote host and repo name indicate otherwise, or a visibility check in the transcript shows public.",
+      "**Internal sharing / snippet hosting**: None configured — treat public paste/gist services as outside the trust boundary",
+      "**Secrets management**: None configured",
+      "**Default / protected branches**: `main` on origin (github.com/mdevhurt1/environment-foundation); queryable via `gh repo view`.",
+      "**CI/CD deploy targets**: None configured",
+      "**Network posture**: None configured",
+      "**Source control**: git, origin on GitHub (public). Vault content under ~/vault/ is a separate, non-published store — do not conflate the two trust boundaries.",
+      "**Trusted internal domains**: git-docs.homelab (internal Gitea/docs host)",
+      "**Trusted cloud buckets**: None configured",
+      "**Key internal services**: None configured",
+      "**Internal package registry**: None configured",
+      "**Sensitive data locations & audiences**: any file or store holding personal data, confidential business data, credentials, regulated data, or similarly sensitive material; preserve exact handles when known and share only with audiences cleared at the [named+specifics] bar. The vault separates human-only rings from shared rings; treat the human-only ones as never-write.",
+      "**Data retention / declassification**: None configured",
+      "**Sensitive remote targets**: any namespace, host, or container whose name carries `prod` or `production` as a whole word or name segment",
+      "**Protected deployment namespaces / environments**: None configured — fall back to the Sensitive remote targets heuristic",
+      "**Protected IaC scopes**: IAM, RBAC, networking, quota, and node-pool resources; anything whose name or tag carries `prod` or `production` as a whole word or name segment",
+      "### User-specific",
+      "**Primary use of Claude Code**: software development and orchestration of an agentic-workflow system (coordinating branched sessions, vault content, and task tracking).",
+      "**Trusted repo**: this repo. It is PUBLIC — writes here are publication, not personal/local. The vault under ~/vault/ is the local-only store.",
+      "**Org-specific CLIs**: cc-branch, cc-teleport, cc-explore, cc-build, cc-continue, cc-doctor (project-specific wrapper scripts referenced in CLAUDE.md and seen in shell history)",
+      "**Routine under this repo's prefix**: ~/vault/20-surface/ (read freely; write to claude-memory/, claude-plans/, claude-specs/, claude-transcripts/, company/tasks/<task-id>/). The human-only and promotion rings are off-limits — never write."
+    ]
+  }
 }

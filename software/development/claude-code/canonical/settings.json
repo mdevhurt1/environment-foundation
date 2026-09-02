@@ -73,6 +73,7 @@
   "skipDangerousModePermissionPrompt": true,
   "theme": "auto",
   "editorMode": "normal",
+  "cleanupPeriodDays": 3650,
   "preferredNotifChannel": "auto",
   "remoteControlAtStartup": true,
   "inputNeededNotifEnabled": true,

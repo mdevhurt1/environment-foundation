@@ -349,7 +349,15 @@ if [ "$policy_ok" -eq 1 ]; then
     if [ ! -r "$roster_file" ]; then
         warn "cannot read the account config - model roster change detection unavailable"
     else
-        roster=$(jq -r '(.additionalModelOptionsCache // []) | .[].value' "$roster_file" 2>/dev/null)
+        # Only entries the account can actually SELECT are decisions. Claude Code
+        # also parks placeholders in this cache to advertise a model the current
+        # CLI is too old to reach -- they carry "disabled": true and a synthetic
+        # value like "cc-update-required-1", which is not a model id and is
+        # reusable for the next gated model. Acknowledging one in known_models
+        # would record nothing and would go stale on the next release, so they
+        # are reported separately by 10d instead.
+        roster=$(jq -r '(.additionalModelOptionsCache // [])
+                        | .[] | select(.disabled != true) | .value' "$roster_file" 2>/dev/null)
         if [ -z "$roster" ]; then
             ok "account model roster is empty (nothing to acknowledge)"
         else
@@ -371,6 +379,30 @@ if [ "$policy_ok" -eq 1 ]; then
                 ok "account model roster fully acknowledged in known_models"
             fi
         fi
+    fi
+fi
+
+# -- 10d. models gated behind a CLI update ---------------------------------
+# 10c deliberately ignores disabled roster entries. They still matter: a gated
+# entry means a newer model EXISTS on the account and only the CLI version is
+# holding it back. That is a standing decision -- once the CLI is updated,
+# Default may move and every track-latest role follows it -- so surface it
+# explicitly rather than letting an outdated CLI pass for a control.
+if [ -r "$HOME/.claude.json" ]; then
+    gated=$(jq -r '(.additionalModelOptionsCache // [])
+                   | .[] | select(.disabled == true)
+                   | "\(.label // .value): \(.description // "no detail given")"' \
+            "$HOME/.claude.json" 2>/dev/null)
+    if [ -n "$gated" ]; then
+        installed=$(claude --version 2>/dev/null | awk '{print $1}')
+        warn "account roster advertises model(s) gated behind a CLI update:"
+        printf '       %s\n' "$gated"
+        printf '       installed CLI: %s\n' "${installed:-unknown}"
+        printf '       These are NOT selectable yet, so they need no known_models entry.\n'
+        printf '       But updating the CLI makes them selectable, and every track-latest\n'
+        printf '       role follows Default. Decide BEFORE updating, not after.\n'
+    else
+        ok "no models gated behind a CLI update"
     fi
 fi
 

@@ -67,12 +67,28 @@ else
     ok "no secret-shaped strings in canonical/"
 fi
 
-# Allow ~ and $HOME but not absolute /home/<user>/ paths
-if grep -rE '/home/[a-z][a-z0-9_-]*/' "$CANONICAL" 2>/dev/null \
-        | grep -v '#'; then
+# Allow ~ and $HOME but not absolute /home/<user>/ paths.
+#
+# EXEMPTION: settings.json's autoMode.environment. That block is deliberately
+# cross-machine environment context -- it names the operator's vault rings and
+# trusted repo by absolute path, and those paths are identical on every machine
+# this repo configures, so they are portable in the sense this check cares
+# about. The exemption is scoped to that ONE key: the rest of settings.json is
+# still scanned (via jq del), so a stray /home/... in permissions, hooks or
+# statusLine still fails. Do not widen this to --exclude=settings.json.
+home_hits=$(
+    {
+        grep -rE '/home/[a-z][a-z0-9_-]*/' "$CANONICAL" --exclude=settings.json 2>/dev/null
+        jq -r 'del(.autoMode.environment)' "$CANONICAL/settings.json" 2>/dev/null \
+            | grep -E '/home/[a-z][a-z0-9_-]*/' \
+            | sed "s|^|$CANONICAL/settings.json:|"
+    } | grep -v '#'
+)
+if [ -n "$home_hits" ]; then
+    printf '%s\n' "$home_hits"
     fail "absolute /home/<user>/ path found in canonical/ (above)"
 else
-    ok "no hardcoded user home paths in canonical/"
+    ok "no hardcoded user home paths in canonical/ (autoMode.environment exempt)"
 fi
 
 # ---- 3. ~/.bashrc sources cc-functions.sh ----

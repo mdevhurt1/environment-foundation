@@ -5,8 +5,8 @@ description: Use when making API calls to the self-hosted Plane instance — cre
 
 # Plane API Guide
 
-Self-hosted Plane at `http://plane.homelab` (currently `192.168.1.82`). Always use the
-hostname — it survives a VM IP change. All requests require the auth header below.
+Self-hosted Plane at `http://plane.homelab`. Always use the hostname — it
+survives a VM IP change. All requests require the auth header below.
 
 ## Before You Start
 
@@ -272,9 +272,9 @@ The umd workspace is empty as of 2026-05-19 (Spring 2026 coursework complete). F
 
 ## Operational Notes
 
-- **Intermittent failures vs sandbox/auth issues:** If HTTP requests return `000` / timeouts after earlier requests succeeded in the same session, the most likely cause is **the UDM SE IPS/Threat Management dropping the inter-VLAN HTTP session** — not a Plane stack outage. The workstation is on `192.168.2.0/24` and Plane on `192.168.1.0/24`, so traffic traverses the UDM and IPS signatures occasionally flag legitimate API payloads (UUID paths, large JSON, bearer tokens). Diagnose:
-  1. `nc -zv 192.168.1.82 80` — if TCP succeeds but HTTP times out, it's a session-level drop (IPS smoking gun).
-  2. Check the UDM threat log (UniFi controller → Insights → Threats, or Settings → Security → Threat Management → History) for events involving `192.168.1.82` around the failure time.
+- **Intermittent failures vs sandbox/auth issues:** If HTTP requests return `000` / timeouts after earlier requests succeeded in the same session, the most likely cause is **the UDM SE IPS/Threat Management dropping the inter-VLAN HTTP session** — not a Plane stack outage. The workstation and the Plane host sit on different VLANs, so traffic traverses the UDM and IPS signatures occasionally flag legitimate API payloads (UUID paths, large JSON, bearer tokens). Diagnose:
+  1. `nc -zv plane.homelab 80` — if TCP succeeds but HTTP times out, it's a session-level drop (IPS smoking gun).
+  2. Check the UDM threat log (UniFi controller → Insights → Threats, or Settings → Security → Threat Management → History) for events involving the Plane host's address (`getent hosts plane.homelab`) around the failure time.
   3. Only then suspect the Plane stack. VM 107 has very generous resource headroom (~5.8 GB RAM, 11 containers using <2 GB combined) — actual stack-internal outages are rare.
   Don't churn on `no_proxy`/auth workarounds when the symptom is a sudden cliff after working calls. See cross-task memory `project_udm_ips_blocks_lan_api.md` (2026-05-19 root-cause investigation).
 - **Archive endpoint:** `POST /api/v1/workspaces/{slug}/projects/{id}/archive/` returns 204 on success. Sometimes returns 404 on the response despite the archive completing — verify with a follow-up list query using `?include_archived=true`.

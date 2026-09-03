@@ -52,7 +52,7 @@ failure. Override the host with `PLANE_HOST=... bash configure.sh`.
 
 ## Host
 
-Use the hostname `plane.homelab` (currently `192.168.1.82`) — it survives a VM
-IP change. If calls succeed and then suddenly time out, suspect the UDM SE
-IPS dropping the inter-VLAN session before suspecting the Plane stack; the
-`plane-api` skill documents the diagnostic sequence.
+Use the hostname `plane.homelab` — it survives a VM IP change. If calls
+succeed and then suddenly time out, suspect the UDM SE IPS dropping the
+inter-VLAN session before suspecting the Plane stack; the `plane-api` skill
+documents the diagnostic sequence.

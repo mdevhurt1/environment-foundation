@@ -73,6 +73,13 @@ re-stamp or delete when re-verified):
 <!-- EA: add task-specific dated claims here, each with its stamp. A
      claim you cannot stamp goes in as a probe or not at all. -->
 
+## Board discipline
+
+The EA owns every Plane write. Read tickets freely; never change a state,
+post a comment, or file an issue — report what the board should say and the
+EA applies it. (Single-writer rule; a child board write forks the status
+surface from its verifier.)
+
 ## Escalation / completion protocol
 
 Write event files to

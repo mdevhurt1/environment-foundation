@@ -88,7 +88,138 @@ if [ -n "$home_hits" ]; then
     printf '%s\n' "$home_hits"
     fail "absolute /home/<user>/ path found in canonical/ (above)"
 else
-    ok "no hardcoded user home paths in canonical/ (autoMode.environment exempt)"
+    ok "no hardcoded user home paths in canonical/ (autoMode.environment exempt; see 2c)"
+fi
+
+# ---- 2c. autoMode.environment disclosure gate ----
+#
+# The exemption above answers a PORTABILITY question -- are these paths the
+# same on every machine this repo configures? They are, so cd611ce was right.
+# But it left autoMode.environment as the only thing in canonical/ with no
+# automated check on it at all, and that key is the worst possible candidate
+# for none, because it is AUTO-GENERATED AND SELF-REFILLING. Claude Code
+# rewrites it per workspace, so it reacquires whatever directory it was last
+# generated in, lands in a version-controlled file through the
+# ~/.claude/settings.json symlink, and is PUBLISHED: origin is
+# github.com/mdevhurt1/environment-foundation, which GitHub reports public.
+# Confirmed empirically when this was filed -- an injected
+# /home/otheruser/.ssh/id_ed25519 inside the block passes the check above
+# without a word.
+#
+# So this gate asks the other question. Not "is this portable?" but "is this
+# fit to publish?" Four classes, and deliberately NOT the operator's own
+# absolute home paths, which is exactly the case cd611ce exists to allow:
+#
+#   foreign-home     a home directory belonging to someone other than the
+#                    operator running the check
+#   rfc1918          private-range IP literals -- internal network topology
+#   internal-domain  a hostname on a non-public TLD
+#   vault-ring       Obsidian vault ring names, which disclose the vault's
+#                    structure and therefore which rings hold human-only work
+#
+# Adding a class is cheap. The patterns are constants declared HERE and are
+# never derived from the file under test -- a guard that takes its work-list
+# from the guarded artifact reproduces the artifact's own omissions.
+DISCLOSURE_VAULT_RINGS='00-core|10-middle|20-surface|40-journal|60-resources|90-archive'
+DISCLOSURE_INTERNAL_TLDS='homelab|internal|intranet|lan|corp'
+
+# Restated deliberately rather than shared with the $HOME/vault check in
+# section 6: that list describes the vault that EXISTS, this one describes what
+# must not be PUBLISHED. They agree today and are allowed to diverge.
+
+# The operator's own home comes from the running environment, an independent
+# census. With no trustworthy $HOME the gate fails CLOSED -- every /home/<user>/
+# becomes foreign, which is noisy but never silent.
+if [ -n "${HOME:-}" ] && [ "$HOME" != "/" ]; then
+    DISCLOSURE_OWN_HOME="$HOME"
+else
+    DISCLOSURE_OWN_HOME=""
+fi
+
+# Reads text on stdin; writes one "class|match" line per distinct disclosure
+# token, and nothing at all when the input is clean. Always returns 0 -- an
+# empty result must mean "scanned, found nothing", never "the scan fell over",
+# so callers decide severity and never read an exit status for a verdict.
+disclosure_scan() {
+    local text
+    text=$(cat)
+
+    printf '%s\n' "$text" | grep -oE '/home/[a-z_][a-z0-9_-]*' | sort -u \
+        | while IFS= read -r home; do
+            [ -n "$DISCLOSURE_OWN_HOME" ] && [ "$home" = "$DISCLOSURE_OWN_HOME" ] && continue
+            printf 'foreign-home|%s\n' "$home"
+        done
+
+    printf '%s\n' "$text" | grep -oE \
+        '\b(10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]{1,3}\.[0-9]{1,3}|192\.168\.[0-9]{1,3}\.[0-9]{1,3})\b' \
+        | sort -u | sed 's/^/rfc1918|/'
+
+    printf '%s\n' "$text" \
+        | grep -oE "\b[a-z0-9][a-z0-9-]*\.($DISCLOSURE_INTERNAL_TLDS)\b" \
+        | sort -u | sed 's/^/internal-domain|/'
+
+    printf '%s\n' "$text" | grep -oE "\b($DISCLOSURE_VAULT_RINGS)\b" \
+        | sort -u | sed 's/^/vault-ring|/'
+
+    return 0
+}
+
+# ACCEPTED BASELINE -- CEO ruling, 2026-09-03.
+#
+# These exact tokens are already published on the public remote and were
+# ruled ACCEPTED AS EXPOSED: no scrub, no redaction, no history rewrite. The
+# gate's job is to stop the NEXT disclosure, not to relitigate these. They are
+# baselined here rather than deleted from settings.json, and rather than left
+# permanently red, because a check nobody can ever satisfy is the same failure
+# mode as no check at all -- everyone learns to ignore it.
+#
+# This is an EXACT, WHOLE-LINE allowlist of "class|token" pairs, deliberately
+# not a pattern: git-docs.homelab is accepted, git-docs2.homelab is not, and a
+# third ring name appearing tomorrow is not. Removing a line here re-arms the
+# gate for that token. Adding one is a publication decision and needs the same
+# sign-off this list records.
+DISCLOSURE_BASELINE='internal-domain|git-docs.homelab
+vault-ring|20-surface'
+
+am_json="$CANONICAL/settings.json"
+if [ ! -f "$am_json" ]; then
+    fail "canonical/settings.json missing - autoMode.environment disclosure gate did not run"
+elif ! am_entries=$(jq -r '(.autoMode.environment // empty) | .. | strings' "$am_json" 2>/dev/null); then
+    fail "cannot read .autoMode.environment from canonical/settings.json - disclosure gate did not run"
+else
+    # Report the count on every branch: a zero from a sweep is only evidence if
+    # the sweep can show it actually had something to look at.
+    am_count=$(printf '%s' "$am_entries" | grep -c .)
+    am_hits=$(printf '%s\n' "$am_entries" | disclosure_scan)
+
+    # Split findings against the accepted baseline. Accepted ones are still
+    # PRINTED on the pass -- an accepted disclosure that becomes invisible is
+    # an undocumented one, and the next reader needs to see what was signed off.
+    am_new="" am_accepted="" 
+    while IFS= read -r hit; do
+        [ -z "$hit" ] && continue
+        case $'\n'"$DISCLOSURE_BASELINE"$'\n' in
+            *$'\n'"$hit"$'\n'*) am_accepted="$am_accepted$hit"$'\n' ;;
+            *)                  am_new="$am_new$hit"$'\n' ;;
+        esac
+    done <<< "$am_hits"
+    am_n_acc=$(printf '%s' "$am_accepted" | grep -c .)
+
+    if [ -n "$am_new" ]; then
+        fail "autoMode.environment discloses NEW non-public detail ($am_count entries scanned)"
+        printf '%s' "$am_new" | awk -F'|' '{ printf "       %-16s %s\n", $1, $2 }'
+        printf '       This key is auto-generated and self-refilling, so it carries whatever\n'
+        printf '       the last session picked up into a PUBLIC repo. Fix the content in\n'
+        printf '       canonical/settings.json. Do not widen the exemption above, and do not\n'
+        printf '       add these to DISCLOSURE_BASELINE without the sign-off that list records.\n'
+    elif [ "$am_count" -eq 0 ]; then
+        ok "autoMode.environment absent from canonical/settings.json (nothing to disclose)"
+    elif [ "$am_n_acc" -gt 0 ]; then
+        ok "autoMode.environment carries no NEW disclosure ($am_count entries scanned; $am_n_acc accepted, CEO ruling 2026-09-03)"
+        printf '%s' "$am_accepted" | awk -F'|' '{ printf "       accepted: %-16s %s\n", $1, $2 }'
+    else
+        ok "autoMode.environment carries no disclosure-shaped content ($am_count entries scanned)"
+    fi
 fi
 
 # ---- 3. ~/.bashrc sources cc-functions.sh ----

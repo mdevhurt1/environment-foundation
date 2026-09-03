@@ -55,7 +55,10 @@ TASKS_DIR="${CC_PLANE_TASKS_DIR:-$VAULT/tasks}"
 # Overridable so `health`'s fleet side can be exercised against a fixture tree
 # instead of the live one. Never point this at the live tree in a test.
 SLOTS_DIR="${CC_PLANE_SLOTS_DIR:-$VAULT/tree/sessions}"
-PLANE_BASE="http://plane.homelab/api/v1"
+# Overridable for the same reason as the two directories above: the tests
+# point it at a loopback fake so the HTTP layer can be exercised without a
+# live Plane. Never point it at the real instance from a test.
+PLANE_BASE="${CC_PLANE_BASE:-http://plane.homelab/api/v1}"
 WORKSPACE="${CC_PLANE_WORKSPACE:-homelab}"
 
 # Staleness thresholds (convention S4). Environment-overridable for a one-off
@@ -162,13 +165,16 @@ find_mode_file() {
     done
 }
 
+# No grep|head|cut here: this file sets pipefail, and an early-exit consumer
+# on the right of a pipe SIGPIPE-aborts once the producer outgrows a read
+# block (doctor.sh check 9). awk reads the file directly and stops itself.
 mode_get() {  # mode_get <key> <file>
     [ -f "$2" ] || return 0
-    grep "^$1=" "$2" 2>/dev/null | head -1 | cut -d= -f2- || true
+    awk -v k="$1" 'index($0, k "=") == 1 { print substr($0, length(k) + 2); exit }' "$2"
 }
 
 is_issue_ref() {  # PROJECTKEY-123
-    printf '%s' "$1" | grep -Eq '^[A-Z][A-Z0-9_]*-[0-9]+$'
+    [[ "$1" =~ ^[A-Z][A-Z0-9_]*-[0-9]+$ ]]
 }
 
 MODEF=$(find_mode_file || true)
@@ -190,8 +196,8 @@ if [ -z "$ISSUE_REF" ] && [ -n "$MODEF" ]; then
     ISSUE_REF=$(mode_get plane_issue "$MODEF")          # precedence 2
 fi
 if [ -z "$ISSUE_REF" ] && [ -n "$SLUG" ] && [ -f "$TASKS_DIR/$SLUG/plane.md" ]; then
-    ISSUE_REF=$(grep -E '^plane:' "$TASKS_DIR/$SLUG/plane.md" 2>/dev/null \
-                | head -1 | sed 's/^plane:[[:space:]]*//' || true)   # precedence 3
+    ISSUE_REF=$(awk '/^plane:/ { sub(/^plane:[[:space:]]*/, ""); print; exit }' \
+                    "$TASKS_DIR/$SLUG/plane.md" 2>/dev/null || true)   # precedence 3
 fi
 if [ -z "$ISSUE_REF" ] && [ -n "$SLUG" ] && is_issue_ref "$SLUG"; then
     ISSUE_REF="$SLUG"                                    # precedence 4

@@ -112,7 +112,9 @@ EOF
 
 run_gate() { bash "$RECLAIM" --tree-dir "$TREE" --tmux-session "$SESSION" --no-fetch "$@" 2>&1; }
 
-win_exists() { tmux list-windows -t "$SESSION" -F '#{window_name}' 2>/dev/null | grep -Fxq "$1"; }
+# Capture-then-herestring, not a pipe: grep -Fxq is an early-exit consumer
+# and this script sets pipefail (doctor.sh check 9).
+win_exists() { local w; w=$(tmux list-windows -t "$SESSION" -F '#{window_name}' 2>/dev/null); grep -Fxq "$1" <<<"$w"; }
 
 # check <case-name> <expectation-text> <condition-result 0|1> <output>
 check() {
@@ -133,7 +135,7 @@ R1=$(mk_repo p1)
 mk_child "$R1" T-PASS 1111111111111111111111 1111111111111111111111 completed 2026-09-03T01:00:00-04:00 0 1 >/dev/null
 out=$(run_gate --repo "$R1" --kill T-PASS); rc=$?
 ok=1
-if printf '%s' "$out" | grep -q "VERDICT: RECLAIMED" && [ "$rc" -eq 0 ] && ! win_exists T-PASS; then ok=0; fi
+if grep -q "VERDICT: RECLAIMED" <<<"$out" && [ "$rc" -eq 0 ] && ! win_exists T-PASS; then ok=0; fi
 check "all four conditions hold" \
       "VERDICT: RECLAIMED, exit 0, window gone" "$ok" "$out"
 
@@ -142,8 +144,8 @@ R2=$(mk_repo p2)
 mk_child "$R2" T-RUNNING 2222222222222222222222 2222222222222222222222 running "" 0 1 >/dev/null
 out=$(run_gate --repo "$R2" --kill T-RUNNING); rc=$?
 ok=1
-if printf '%s' "$out" | grep -q "C1 status   : FAIL" \
-   && printf '%s' "$out" | grep -q "VERDICT: REFUSED" \
+if grep -q "C1 status   : FAIL" <<<"$out" \
+   && grep -q "VERDICT: REFUSED" <<<"$out" \
    && [ "$rc" -eq 1 ] && win_exists T-RUNNING; then ok=0; fi
 check "C1 — status=running (the 2026-08-15 failure)" \
       "C1 FAIL, VERDICT: REFUSED, exit 1, window KEPT" "$ok" "$out"
@@ -153,7 +155,7 @@ R3=$(mk_repo p3)
 mk_child "$R3" T-NOEND 3333333333333333333333 3333333333333333333333 completed "" 0 1 >/dev/null
 out=$(run_gate --repo "$R3" --kill T-NOEND); rc=$?
 ok=1
-if printf '%s' "$out" | grep -q "ended_at is EMPTY" && [ "$rc" -eq 1 ] && win_exists T-NOEND; then ok=0; fi
+if grep -q "ended_at is EMPTY" <<<"$out" && [ "$rc" -eq 1 ] && win_exists T-NOEND; then ok=0; fi
 check "C1 — completed but ended_at unset (close-out mid-write)" \
       "'ended_at is EMPTY', exit 1, window KEPT" "$ok" "$out"
 
@@ -162,7 +164,7 @@ R4=$(mk_repo p4)
 mk_child "$R4" T-DIRTY 4444444444444444444444 4444444444444444444444 completed 2026-09-03T01:00:00-04:00 1 1 >/dev/null
 out=$(run_gate --repo "$R4" --kill T-DIRTY); rc=$?
 ok=1
-if printf '%s' "$out" | grep -q "C2 clean    : FAIL" && [ "$rc" -eq 1 ] && win_exists T-DIRTY; then ok=0; fi
+if grep -q "C2 clean    : FAIL" <<<"$out" && [ "$rc" -eq 1 ] && win_exists T-DIRTY; then ok=0; fi
 check "C2 — worktree has uncommitted changes" \
       "C2 FAIL listing the dirty path, exit 1, window KEPT" "$ok" "$out"
 
@@ -171,8 +173,8 @@ R5=$(mk_repo p5)
 mk_child "$R5" T-UNMERGED 5555555555555555555555 5555555555555555555555 completed 2026-09-03T01:00:00-04:00 0 0 >/dev/null
 out=$(run_gate --repo "$R5" --kill T-UNMERGED); rc=$?
 ok=1
-if printf '%s' "$out" | grep -q "C3 merged   : FAIL" \
-   && printf '%s' "$out" | grep -q "deliberately unmerged" \
+if grep -q "C3 merged   : FAIL" <<<"$out" \
+   && grep -q "deliberately unmerged" <<<"$out" \
    && [ "$rc" -eq 1 ] && win_exists T-UNMERGED; then ok=0; fi
 check "C3 — branch not merged into main" \
       "C3 FAIL + 'deliberately unmerged' note, exit 1, window KEPT" "$ok" "$out"
@@ -216,9 +218,9 @@ EOF
 rm -f "$TREE/6666666666666666666666.md"
 out=$(run_gate --repo "$R6" --kill T-REUSED); rc=$?
 ok=1
-if printf '%s' "$out" | grep -q "cc-mode sid : 6b6b6b6b6b6b6b6b6b6b6b" \
-   && printf '%s' "$out" | grep -q "6a6a6a6a6a6a6a6a6a6a6a(abandoned)" \
-   && printf '%s' "$out" | grep -q "C1 status   : FAIL" \
+if grep -q "cc-mode sid : 6b6b6b6b6b6b6b6b6b6b6b" <<<"$out" \
+   && grep -q "6a6a6a6a6a6a6a6a6a6a6a(abandoned)" <<<"$out" \
+   && grep -q "C1 status   : FAIL" <<<"$out" \
    && [ "$rc" -eq 1 ] && win_exists T-REUSED; then ok=0; fi
 check "C4 — worktree reused; a stale completed slot shares the task_id" \
       "resolves to the .cc-mode session (6b…), names the decoy (6a…) as unused, C1 FAIL, window KEPT" \
@@ -232,7 +234,7 @@ tmux new-window -d -t "$SESSION" -n decoy-index 'sleep 100000' 2>/dev/null
 mk_child "$R7" 42 7777777777777777777777 7777777777777777777777 completed 2026-09-03T01:00:00-04:00 0 1 >/dev/null
 out=$(run_gate --repo "$R7" --kill 42); rc=$?
 ok=1
-if printf '%s' "$out" | grep -q "VERDICT: RECLAIMED" \
+if grep -q "VERDICT: RECLAIMED" <<<"$out" \
    && ! win_exists 42 && win_exists decoy-index && [ "$rc" -eq 0 ]; then ok=0; fi
 check "numeric task_id '42' addressed by name, not as window index 42" \
       "window '42' reclaimed, decoy window untouched" "$ok" "$out"
@@ -246,7 +248,7 @@ mk_child "$R8" T-RACE 8888888888888888888888 8888888888888888888888 completed 20
 out=$(CC_RECLAIM_TEST_PRE_KILL_HOOK="sed -i 's/^status: completed/status: running/' '$TREE/8888888888888888888888.md'" \
       run_gate --repo "$R8" --kill T-RACE); rc=$?
 ok=1
-if printf '%s' "$out" | grep -q "VERDICT: ABORTED (race caught)" \
+if grep -q "VERDICT: ABORTED (race caught)" <<<"$out" \
    && [ "$rc" -eq 4 ] && win_exists T-RACE; then ok=0; fi
 check "race — slot flips to running after the gate passes" \
       "VERDICT: ABORTED (race caught), exit 4, window KEPT" "$ok" "$out"

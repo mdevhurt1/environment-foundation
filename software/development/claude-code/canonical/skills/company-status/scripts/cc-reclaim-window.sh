@@ -208,7 +208,7 @@ for task_id in "${TASKS[@]}"; do
     dirty_n=$( [ -z "$porcelain" ] && echo 0 || printf '%s\n' "$porcelain" | wc -l | tr -d ' ')
     if [ "$dirty_n" -ne 0 ]; then
         echo "C2 clean    : FAIL — $dirty_n uncommitted path(s)"
-        printf '%s\n' "$porcelain" | head -10 | sed 's/^/              /'
+        head -10 <<<"$porcelain" | sed 's/^/              /'
         fail="${fail}C2 "
     else
         echo "C2 clean    : PASS (git status --porcelain empty)"
@@ -258,9 +258,9 @@ for task_id in "${TASKS[@]}"; do
     if command -v tmux >/dev/null 2>&1; then
         wl=$(tmux list-windows -t "$TMUX_SESSION" -F '#{window_name}' 2>&1)
         if [ $? -ne 0 ]; then
-            echo "window      : tmux unavailable — $(printf '%s' "$wl" | head -1)"
+            echo "window      : tmux unavailable — $(head -1 <<<"$wl")"
             fail="${fail}TMUX "
-        elif printf '%s\n' "$wl" | grep -Fxq "$task_id"; then
+        elif grep -Fxq "$task_id" <<<"$wl"; then
             echo "window      : ${TMUX_SESSION}:=${task_id} present"
             win_ok=1
         else

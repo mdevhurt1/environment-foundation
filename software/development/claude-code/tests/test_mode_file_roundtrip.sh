@@ -610,14 +610,14 @@ q_eval_roundtrip "$Q_ALL"         "the composite hostile value"
 # ordinary values grew quotes. This assertion is what stops that happening by
 # accident.
 D_WIRE=$(t_tmpdir) || { t_fail "tmpdir"; t_finish; exit 1; }
-__cc_write_mode_file "$D_WIRE" branched INFRA-45 /home/mhurt/environment-foundation \
-    d5112587ab04478ab4a29e 72227ce9183843ee8c2599 opus policy:branched-worker "" settings-default
+__cc_write_mode_file "$D_WIRE" branched INFRA-45 /home/u/repo \
+    sid pid opus policy:branched-worker "" settings-default
 assert_eq "wire format: a real branched launch is written entirely bare" \
     "mode=branched
 slug=INFRA-45
-parent_repo=/home/mhurt/environment-foundation
-session_id=d5112587ab04478ab4a29e
-parent_id=72227ce9183843ee8c2599
+parent_repo=/home/u/repo
+session_id=sid
+parent_id=pid
 model=opus
 model_source=policy:branched-worker
 perm_mode=

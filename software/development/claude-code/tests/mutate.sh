@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Description: Mutation check — breaks cc-functions.sh in known ways and asserts the test suite catches each one, so that a green run means something.
+# Description: Mutation check — breaks cc-functions.sh and statusline-command.sh in known ways and asserts the test suite catches each one, so that a green run means something.
 # Profiles:    workstation, workplace
 # Platforms:   ubuntu-24.04, ubuntu-22.04 (WSL supported)
 # Dependencies: bash 4+, jq, python3, coreutils, the tests in this directory
-# Idempotent. Never modifies the checked-in cc-functions.sh — every mutation is
-# applied to a throwaway copy under $TMPDIR.
+# Idempotent. Never modifies a checked-in file — every mutation is applied to a
+# throwaway copy under $TMPDIR.
 
 set -uo pipefail   # NOT -e: every mutation must be attempted and reported.
 
@@ -17,7 +17,20 @@ source "$REPO_ROOT/shared/logging.sh"
 
 require_not_root
 
-SUBJECT="$MODULE_DIR/canonical/shell/cc-functions.sh"
+# Two subjects now, not one. INFRA-45 moved half the .cc-mode fix into the
+# READER -- the statusline stopped sourcing the file and started parsing it --
+# and a mutation table that can only reach cc-functions.sh would leave that
+# half unmutated, which is the same as leaving it untested. Each mutation
+# names its subject; the test file it must break is invoked with the matching
+# *_UNDER_TEST variable so the suite loads the mutant rather than the original.
+declare -A SUBJECTS=(
+    [functions]="$MODULE_DIR/canonical/shell/cc-functions.sh"
+    [statusline]="$MODULE_DIR/canonical/statusline-command.sh"
+)
+declare -A SUBJECT_ENV=(
+    [functions]=CC_FUNCTIONS_UNDER_TEST
+    [statusline]=STATUSLINE_UNDER_TEST
+)
 
 # A test that has never been seen to fail proves nothing. Each mutation below
 # breaks ONE behaviour the suite claims to protect, and names the test file that
@@ -33,8 +46,13 @@ SUBJECT="$MODULE_DIR/canonical/shell/cc-functions.sh"
 # Patterns are held in quoted heredocs rather than in a one-line table so the
 # before/after reads as the actual code, with no escaping layer to get wrong.
 
-declare -a M_LABEL M_TEST M_FROM M_TO
-add_mut() { M_LABEL+=("$1"); M_TEST+=("$2"); M_FROM+=("$3"); M_TO+=("$4"); }
+declare -a M_LABEL M_TEST M_FROM M_TO M_SUBJ
+# add_mut <label> <test-file> <from> <to> [subject]   subject defaults to
+# "functions"; the other value is "statusline".
+add_mut() {
+    M_LABEL+=("$1"); M_TEST+=("$2"); M_FROM+=("$3"); M_TO+=("$4")
+    M_SUBJ+=("${5:-functions}")
+}
 
 # ---- __cc_resolve_model --------------------------------------------------
 
@@ -94,27 +112,123 @@ TO
 
 # ---- __cc_write_mode_file ------------------------------------------------
 
-# Remove the '=' from the session_id scrub set. A malformed id can then inject
-# extra .cc-mode keys — the exact case the scrub's own comment cites.
-add_mut "'=' scrub dropped from session_id" test_mode_file_roundtrip.sh \
+# RETARGETED by INFRA-45. This was "'=' scrub dropped from session_id", editing
+# `_sid=$(printf %s "$5" | tr -d '\n=')`, a line the quoting contract deleted.
+# The INTENT is unchanged and is why it was retargeted rather than dropped: a
+# malformed id must not be able to inject extra .cc-mode keys. Under the
+# contract that defence is no longer the '=' scrub -- a '=' inside a value is
+# harmless once the value is one quoted token -- it is the line-break strip,
+# because a newline is the only character that can still manufacture a second
+# line, and therefore a second key. So the mutation now removes that strip.
+add_mut "line-break strip dropped from the encoder" test_mode_file_roundtrip.sh \
 "$(cat <<'FROM'
-    _sid=$(printf '%s' "$5" | tr -d '\n=')
+    v=${v//$'\n'/}
 FROM
 )" "$(cat <<'TO'
-    _sid=$(printf '%s' "$5" | tr -d '\n')
+    v=${v//$'\r'/}
 TO
 )"
 
-# Remove the whitespace scrub from model. A model value with a space then
-# breaks the statusline's source of .cc-mode — silently, on every repaint.
-add_mut "whitespace scrub dropped from model" test_mode_file_roundtrip.sh \
+# RETARGETED by INFRA-45. This was "whitespace scrub dropped from model",
+# editing `_model=$(printf %s "${7:-}" | tr -d "\n= \t")`, also deleted by the
+# contract. Intent unchanged: a value containing a space must not reach a
+# sourcing reader unquoted. The defence moved from deleting the space to
+# quoting the value, so the mutation now admits the space into the safe-bare
+# set -- the one edit that would put a raw space back into the file. The space
+# is written as a quoted " " because an unquoted one inside a case pattern
+# ends the pattern word, and a mutant that does not parse tests nothing.
+add_mut "a space is admitted to the safe-bare set" test_mode_file_roundtrip.sh \
 "$(cat <<'FROM'
-    _model=$(printf '%s' "${7:-}" | tr -d "\n= \t")
+        *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_@%+:,./-]*)
 FROM
 )" "$(cat <<'TO'
-    _model=$(printf '%s' "${7:-}" | tr -d "\n=")
+        *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_@%+:,./-" "]*)
 TO
 )"
+
+# The escape that makes single-quoting work at all. Without it a value
+# containing a quote closes the quoting early and the rest of the value is
+# bare shell — the unbalanced-quote defect, reintroduced by one deletion.
+add_mut "the single-quote escape is dropped from the encoder" test_mode_file_roundtrip.sh \
+"$(cat <<'FROM'
+            printf "'%s'" "${v//\'/\'\\\'\'}" ;;
+FROM
+)" "$(cat <<'TO'
+            printf "'%s'" "$v" ;;
+TO
+)"
+
+# The safe set is the whole security predicate. Admitting '$' writes a command
+# substitution into the file bare — defect 3, restored by one character.
+add_mut "'\$' is admitted to the safe-bare set" test_mode_file_roundtrip.sh \
+"$(cat <<'FROM'
+        *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_@%+:,./-]*)
+FROM
+)" "$(cat <<'TO'
+        *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_@%+:,./$-]*)
+TO
+)"
+
+# The decoder half. If it stops unquoting, every quoted value reaches
+# cc-continue and the tests with its quote characters still attached.
+add_mut "the decoder stops unquoting" test_mode_file_roundtrip.sh \
+"$(cat <<'FROM'
+        "'"*"'")
+            v=${v#\'}
+            v=${v%\'}
+FROM
+)" "$(cat <<'TO'
+        "'"*"'"XXNEVERXX)
+            v=${v#\'}
+            v=${v%\'}
+TO
+)"
+
+# ---- statusline-command.sh -----------------------------------------------
+
+# The whole reader-side fix, reverted: source .cc-mode instead of parsing it.
+# This is the mutation the statusline tests exist for — it restores all three
+# INFRA-45 defects for any .cc-mode the writer did not produce.
+add_mut "the statusline sources .cc-mode again" test_statusline.sh \
+"$(cat <<'FROM'
+        while IFS= read -r line || [ -n "$line" ]; do
+            case $line in
+                mode=*)  __cc_unq "${line#mode=}";  mode=$UNQ  ;;
+                slug=*)  __cc_unq "${line#slug=}";  slug=$UNQ  ;;
+                model=*) __cc_unq "${line#model=}"; model=$UNQ ;;
+            esac
+        done < "$dir/.cc-mode"
+FROM
+)" "$(cat <<'TO'
+        # shellcheck disable=SC1090,SC1091
+        . "$dir/.cc-mode"
+TO
+)" statusline
+
+# The statusline carries its own copy of the decoder because it is /bin/sh and
+# cannot source cc-functions.sh on every repaint. Two copies of one algorithm
+# is a standing invitation for them to drift, so the copy gets its own
+# mutation rather than riding on the bash one's coverage.
+add_mut "the statusline decoder drops the escape collapse" test_statusline.sh \
+"$(cat <<'FROM'
+        UNQ=$UNQ$_pre\'
+FROM
+)" "$(cat <<'TO'
+        UNQ=$UNQ$_pre
+TO
+)" statusline
+
+# The statusline's key whitelist. Widening it to a prefix match lets
+# model_source overwrite the model, which is the drift indicator the whole
+# instrument exists to show.
+add_mut "the statusline whitelist becomes a prefix match" test_statusline.sh \
+"$(cat <<'FROM'
+                model=*) __cc_unq "${line#model=}"; model=$UNQ ;;
+FROM
+)" "$(cat <<'TO'
+                model*) __cc_unq "${line#model=}"; model=$UNQ ;;
+TO
+)" statusline
 
 # Rename a key. Readers B and C look the key up by name, so this silently blanks
 # the field for cc-continue and for the tree-slot writer.
@@ -153,13 +267,17 @@ trap 'rm -rf "$WORK"' EXIT
 
 caught=0 survived=0 stale=0
 
-printf 'Mutation check: %s\n' "$SUBJECT"
-printf '(the checked-in file is never modified; mutants live under %s)\n\n' "$WORK"
+printf 'Mutation check: %s\n' "${SUBJECTS[functions]}"
+printf '                %s\n' "${SUBJECTS[statusline]}"
+printf '(the checked-in files are never modified; mutants live under %s)\n\n' "$WORK"
 
 for i in "${!M_LABEL[@]}"; do
     label="${M_LABEL[$i]}" testfile="${M_TEST[$i]}"
+    subj="${M_SUBJ[$i]}"
+    subject="${SUBJECTS[$subj]}"
+    subject_env="${SUBJECT_ENV[$subj]}"
     mutant="$WORK/mutant-$i.sh"
-    cp "$SUBJECT" "$mutant"
+    cp "$subject" "$mutant"
 
     # Literal substitution, applied once. Exit 3 means the pattern is gone, which
     # is reported rather than silently producing an unmutated "mutant"; exit 4
@@ -179,7 +297,7 @@ PY
     prc=$?
     if [ "$prc" -eq 3 ]; then
         log_error "STALE    $label"
-        printf '         the text this mutation edits is no longer in cc-functions.sh\n'
+        printf '         the text this mutation edits is no longer in %s\n' "$(basename "$subject")"
         stale=$((stale + 1)); continue
     elif [ "$prc" -eq 4 ]; then
         log_error "STALE    $label"
@@ -197,8 +315,8 @@ PY
         stale=$((stale + 1)); continue
     fi
 
-    out=$(CC_FUNCTIONS_UNDER_TEST="$mutant" \
-          env -u CC_MODEL -u CC_MODEL_POLICY -u CC_PERM_MODE \
+    out=$(env "$subject_env=$mutant" \
+          -u CC_MODEL -u CC_MODEL_POLICY -u CC_PERM_MODE \
           bash "$SCRIPT_DIR/$testfile" 2>&1)
     rc=$?
 

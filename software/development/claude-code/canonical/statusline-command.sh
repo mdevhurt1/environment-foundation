@@ -26,15 +26,75 @@ case "$cwd" in
 esac
 
 # --- mode (from .cc-mode in cwd or any ancestor) ---
+#
+# THIS PARSES .cc-mode. IT DOES NOT SOURCE IT. That is the point of INFRA-45.
+#
+# Until 2026-09-03 this block was `. "$dir/.cc-mode"`, which made every value
+# in that file shell code executed once per repaint, in every session, in
+# every worktree. A value containing a space silently blanked its own field; a
+# value containing an unbalanced quote silently blanked every field BELOW it;
+# and a value containing $(...) RAN, over and over, for as long as the session
+# stayed open.
+#
+# The writer now encodes what it writes (see "the .cc-mode quoting contract"
+# in canonical/shell/cc-functions.sh), which makes files THIS writer produces
+# safe to source. That is not sufficient, and is why the reader changed too:
+# this loop consumes whatever .cc-mode the upward walk happens to land on --
+# one written by an older cc-functions.sh, hand-edited during a debug session,
+# restored from a backup, or simply left in an ancestor directory by something
+# else entirely. Encoding on write makes the current instances safe; parsing
+# on read makes the class impossible. Only the second one survives a file this
+# code did not produce.
+#
+# Cost, since this runs on every repaint: one `while read` over ten short
+# lines, entirely in-process. No fork, no eval, no subshell -- __cc_unq
+# returns through a variable rather than through $(...) for exactly that
+# reason. The four jq/whoami/hostname forks already on this path each cost
+# more than the whole loop.
+#
+# Keys are WHITELISTED to the three this file displays. Sourcing also let
+# .cc-mode set anything else in scope -- including $debian_chroot, which the
+# final printf interpolates into the prompt. It cannot any more.
+
+# __cc_unq <raw> -- decode one .cc-mode value into $UNQ, per the contract:
+# a single-quoted value is unwrapped and each '\'' collapsed to '; anything
+# else is already bare and is returned unchanged.
+__cc_unq() {
+    UNQ=$1
+    case $UNQ in "'"*"'") ;; *) return 0 ;; esac
+    UNQ=${UNQ#\'}
+    UNQ=${UNQ%\'}
+    # Fast path: nothing escaped inside, so the unwrap was the whole job.
+    case $UNQ in *"'\\''"*) ;; *) return 0 ;; esac
+    _rest=$UNQ
+    UNQ=''
+    while :; do
+        case $_rest in *"'\\''"*) ;; *) break ;; esac
+        _pre=${_rest%%"'\\''"*}
+        _rest=${_rest#*"'\\''"}
+        UNQ=$UNQ$_pre\'
+    done
+    UNQ=$UNQ$_rest
+}
+
 mode=""
 slug=""
+model=""
 search="$cwd"
 case "$cwd" in "~"*) search="$HOME${cwd#\~}" ;; esac
 dir="$search"
 while [ "$dir" != "/" ] && [ -n "$dir" ]; do
     if [ -f "$dir/.cc-mode" ]; then
-        # shellcheck disable=SC1090,SC1091
-        . "$dir/.cc-mode"
+        # `|| [ -n "$line" ]` so a final line with no trailing newline is not
+        # dropped -- a truncated .cc-mode must degrade to a missing field, not
+        # to a differently-parsed one.
+        while IFS= read -r line || [ -n "$line" ]; do
+            case $line in
+                mode=*)  __cc_unq "${line#mode=}";  mode=$UNQ  ;;
+                slug=*)  __cc_unq "${line#slug=}";  slug=$UNQ  ;;
+                model=*) __cc_unq "${line#model=}"; model=$UNQ ;;
+            esac
+        done < "$dir/.cc-mode"
         break
     fi
     dir=$(dirname "$dir")

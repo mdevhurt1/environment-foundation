@@ -497,7 +497,10 @@ while IFS= read -r f; do
     rel="${f#"$REPO_ROOT"/}"
 
     # (a) line-based early-exit consumers sitting on the right of a pipe
-    hits_a=$(grep -nE '\|[[:space:]]*(head([[:space:]]|$)|grep [^|]*-[a-zA-Z]*q|sed -n [^|]*[0-9]q|read([[:space:]]|$))' "$f" \
+    # `(^|[^|])\|` demands a REAL pipe: in `|| grep -q FILE` the first bar is
+    # followed by a bar and the second is preceded by one, so neither matches —
+    # a logical-OR guard reading a file has no producer to SIGPIPE.
+    hits_a=$(grep -nE '(^|[^|])\|[[:space:]]*(head([[:space:]]|$)|grep [^|]*-[a-zA-Z]*q|sed -n [^|]*[0-9]q|read([[:space:]]|$))' "$f" \
              | grep -vE ':[[:space:]]*#' | grep -v 'sigpipe-ok')
     [ -n "$hits_a" ] && sigpipe_hits="$sigpipe_hits$(printf '%s\n' "$hits_a" | sed "s|^|$rel:|")
 "

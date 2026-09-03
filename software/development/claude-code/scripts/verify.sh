@@ -91,6 +91,8 @@ check_canonical_link "cc-functions.sh"        "shell/cc-functions.sh"
 check_canonical_link "cc-tree-slot-write.sh"  "shell/cc-tree-slot-write.sh"
 check_canonical_link "cc-tree-slot-update.sh" "shell/cc-tree-slot-update.sh"
 check_canonical_link "cc-ring-scan.sh"        "shell/cc-ring-scan.sh"
+check_canonical_link "cc-memory-inject.sh"    "shell/cc-memory-inject.sh"
+check_canonical_link "cc-memory-index-regen.sh" "shell/cc-memory-index-regen.sh"
 check_canonical_link "model-policy.json"      "model-policy.json"
 
 # --- 4. Shell wiring -----------------------------------------------------

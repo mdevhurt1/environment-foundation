@@ -107,6 +107,14 @@ log_ok "linked $CLAUDE_DIR/agents -> $CANONICAL/agents"
 # the brainstorming/writing-plans name collision. Registered in settings.json.
 link "$CANONICAL/shell/cc-skills-inject.sh" "$CLAUDE_DIR/cc-skills-inject.sh"
 
+# SessionStart injector for the compacted memory index (AI_ST-69): loads
+# ~/vault/20-surface/claude-memory/MEMORY.md into every session, closing the
+# write-side/load-side split the auto-memory location override created.
+# Registered in settings.json. The regen helper rebuilds the index in its
+# compacted one-line-per-memory form.
+link "$CANONICAL/shell/cc-memory-inject.sh"      "$CLAUDE_DIR/cc-memory-inject.sh"
+link "$CANONICAL/shell/cc-memory-index-regen.sh" "$CLAUDE_DIR/cc-memory-index-regen.sh"
+
 # ---- ~/.bashrc source line (idempotent) ----
 SOURCE_LINE='[ -f ~/.claude/cc-functions.sh ] && source ~/.claude/cc-functions.sh'
 if ! grep -Fxq "$SOURCE_LINE" "$HOME/.bashrc" 2>/dev/null; then

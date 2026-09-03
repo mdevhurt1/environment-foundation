@@ -77,7 +77,12 @@ The default `auto memory` system prompt instructs writes to
 
 The protocol (memory types, file format, MEMORY.md index) is unchanged.
 Only the location moves. The index at `~/vault/20-surface/claude-memory/MEMORY.md`
-is authoritative; update it when adding or removing a memory.
+is authoritative; after adding, removing, or re-describing a memory,
+regenerate it with `bash ~/.claude/cc-memory-index-regen.sh` (it derives
+one compact line per memory from the file's frontmatter `description:`).
+Do not hand-edit index lines into essays: the `cc-memory-inject.sh`
+SessionStart hook injects the whole index into every session (AI_ST-69),
+so index bytes are a per-session context tax.
 
 **Why:** memory entries are inherently cross-task (e.g., "user uses
 Gitea-only"; "plane API key lookup pattern"). They belong in the vault

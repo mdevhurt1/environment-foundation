@@ -30,6 +30,10 @@
           {
             "type": "command",
             "command": "$HOME/.claude/cc-skills-inject.sh"
+          },
+          {
+            "type": "command",
+            "command": "$HOME/.claude/cc-memory-inject.sh"
           }
         ]
       },

@@ -10,12 +10,12 @@ survives a VM IP change. All requests require the auth header below.
 
 ## Before You Start
 
-**The API key is NOT an environment variable.** It lives in
-`~/.claude/settings.local.json` under `.env.PLANE_API_KEY`, provisioned by the
-`environment-secrets` repo's `install.sh`. Claude Code does **not** inject that
-`env` block into the Bash tool's shell, so `$PLANE_API_KEY` is empty inside every
-tool call — and it is **not** in `~/.bashrc` or `~/.zshrc` either. Do not `echo
-$PLANE_API_KEY` and conclude the key is missing; read it from the JSON:
+**Probe the key, don't assume its location.** Check the environment first:
+`[ -n "$PLANE_API_KEY" ] && echo set` — as of 2026-09-03 (verified, EA probe)
+the `env` block from `~/.claude/settings.local.json` IS injected into the Bash
+tool's shell, so the variable is usually already set. Only if the probe says
+otherwise, read it from the JSON (its canonical home, provisioned by the
+`environment-secrets` repo's `install.sh`):
 
 ```bash
 PLANE_API_KEY=$(python3 -c "import json,os;print(json.load(open(os.path.expanduser('~/.claude/settings.local.json')))['env']['PLANE_API_KEY'])")
@@ -26,11 +26,13 @@ run on this machine — clone `environment-secrets` and run its `install.sh`. Do
 **not** continue with an empty key; every request returns
 `{"detail": "Authentication credentials were not provided."}` (HTTP 401).
 
-**Network access from the sandbox:** The sandbox sets `no_proxy` to include
-`192.168.0.0/16`, which bypasses the sandbox proxy for LAN addresses. Direct
-connections to LAN addresses are then blocked by the sandbox firewall — `curl`
-returns `Failed to connect ... Network is unreachable`. To reach Plane (or any LAN
-service) from within the sandbox, override `no_proxy` on every call:
+**Network access — probe before working around anything:**
+`curl -sS -m 3 -o /dev/null -w '%{http_code}\n' http://plane.homelab/` — as of
+2026-09-03 (verified, EA probe) a plain curl from an unsandboxed session
+returns 200 with no overrides. Only if that probe fails with
+`Network is unreachable` (seen historically in sandboxed sessions where
+`no_proxy` includes `192.168.0.0/16` and the sandbox firewall blocks direct
+LAN connections) apply the override:
 
 ```bash
 no_proxy="" NO_PROXY="" curl -s -H "X-Api-Key: $PLANE_API_KEY" \
@@ -260,6 +262,7 @@ DELETE /api/v1/workspaces/{workspace_slug}/projects/{project_id}/modules/{module
 | `AI_ST` | AI Stack | `06588b14-1056-4369-b2a8-a5d27f624265` |
 | `MONIT` | Monitoring | `e056f3d9-a6a6-40ef-948c-09909b6a1fa6` |
 | `RESEARCH` | Research Queue | `70bcb81f-1336-44bb-a78a-79e890445c82` |
+| `SENT` | Sentinel | `8834d426-557a-4f96-bbd4-92fe16457b43` |
 
 ## Archived Projects
 
@@ -272,7 +275,7 @@ The umd workspace is empty as of 2026-05-19 (Spring 2026 coursework complete). F
 
 ## Operational Notes
 
-- **Intermittent failures vs sandbox/auth issues:** If HTTP requests return `000` / timeouts after earlier requests succeeded in the same session, the most likely cause is **the UDM SE IPS/Threat Management dropping the inter-VLAN HTTP session** — not a Plane stack outage. The workstation and the Plane host sit on different VLANs, so traffic traverses the UDM and IPS signatures occasionally flag legitimate API payloads (UUID paths, large JSON, bearer tokens). Diagnose:
+- **Intermittent failures vs sandbox/auth issues** *(scoped 2026-09-03: applies only to the mid-session cliff pattern — dozens of direct-LAN calls ran clean all evening on this workstation; do not cite this note as a reason Plane is unreachable up front)*: If HTTP requests return `000` / timeouts after earlier requests succeeded in the same session, the most likely cause is **the UDM SE IPS/Threat Management dropping the inter-VLAN HTTP session** — not a Plane stack outage. The workstation and the Plane host sit on different VLANs, so traffic traverses the UDM and IPS signatures occasionally flag legitimate API payloads (UUID paths, large JSON, bearer tokens). Diagnose:
   1. `nc -zv plane.homelab 80` — if TCP succeeds but HTTP times out, it's a session-level drop (IPS smoking gun).
   2. Check the UDM threat log (UniFi controller → Insights → Threats, or Settings → Security → Threat Management → History) for events involving the Plane host's address (`getent hosts plane.homelab`) around the failure time.
   3. Only then suspect the Plane stack. VM 107 has very generous resource headroom (~5.8 GB RAM, 11 containers using <2 GB combined) — actual stack-internal outages are rare.

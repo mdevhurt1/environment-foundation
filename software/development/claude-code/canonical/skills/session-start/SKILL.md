@@ -9,7 +9,8 @@ This skill makes every session deterministic by establishing four things
 before substantive work begins:
 
 1. **Mode** — exploration, build, continue, or bare
-2. **Goal** — one sentence stated by the user
+2. **Goal** — one sentence, taken from the dispatched brief when there is
+   one, asked of the user only when there is not
 3. **Context** — relevant vault hits surfaced as compact pointers
 4. **Statusline** — reflects mode and goal-slug
 
@@ -20,7 +21,7 @@ before substantive work begins:
 - [ ] Step 3: Write the session's tree slot
 - [ ] Step 4: Manager-decides on resume (read unread subtree events)
 - [ ] Step 5: Surface relevant vault context
-- [ ] Step 6: Solicit one-sentence session goal
+- [ ] Step 6: Establish one-sentence session goal (ask only if not already supplied)
 - [ ] Step 7: Remind user about /end and the CTX-WARN trigger
 
 ## Step 1: Detect launch context
@@ -171,15 +172,77 @@ Relevant vault context:
 
 If no hits, say "no prior vault context for this repo" — that's useful info too.
 
-## Step 6: Solicit one-sentence session goal
+## Step 6: Establish the one-sentence session goal
 
-Ask the user:
+The goal must be **established**, not necessarily **asked for**. Decide
+which branch you are on by evaluating this condition, in order:
+
+**A goal is already available if EITHER:**
+
+1. `.cc-mode` contains a non-empty `goal=` line — check with:
+   ```bash
+   grep '^goal=' "$mode_file" | cut -d= -f2-
+   ```
+   (`$mode_file` is the path resolved in Step 2. No such line is written
+   today — see "Why the goal is not passed in `.cc-mode`" below — so this
+   check normally returns empty. It is here so that if a future dispatcher
+   does write one, this skill already honours it.)
+
+2. **OR** the session's first user message already states what the session
+   is for — a dispatched brief, a task assignment, a plan reference, or any
+   opening message that names the objective. This is the case that actually
+   fires today.
+
+### Branch 1 — goal already available (autonomous / briefed session)
+
+**Do NOT ask. Do NOT wait.** Declare the goal back in one sentence and
+proceed immediately to Step 7:
+
+> "Goal (from the dispatched brief, not prompted): <one sentence>."
+
+Say explicitly that it came from the brief rather than from a prompt, so a
+human reading the transcript later can see the prompt was skipped by design
+and not lost.
+
+A branched session has nobody watching its pane. Asking a question there
+does not get an answer — it produces a session that idles at a prompt while
+still reporting as spawned-and-healthy. Treat "the brief already told me
+what to do" as sufficient. If the brief states the objective but is vague on
+detail, still do not block: state the goal at the confidence you have, note
+the ambiguity, and resolve it as you work.
+
+### Branch 2 — no goal available (interactive human launch)
+
+Ask the user, and wait for the answer:
 > "In one sentence, what is this session for?"
 
-Wait for the answer. Then echo it back as confirmation and store it
-mentally for use in:
+Then echo it back as confirmation.
+
+### Both branches
+
+Store the resulting goal for use in:
 - The eventual `end-conversation` summary (did we accomplish it?)
 - Naming a kept transcript (slug-ified)
+
+### Why the goal is not passed in `.cc-mode`
+
+`cc-branch` deliberately does **not** write a `goal=` line, and should not
+be changed to. Two reasons:
+
+1. `cc-branch <task-id> [<repo-path>]` has no goal to write. It receives a
+   task **identifier** (`INFRA-40`), not an objective sentence, and launches
+   a bare `claude`. The brief arrives afterwards, as the child's first user
+   message. Adding a goal parameter would make the caller pass the objective
+   twice.
+2. `statusline-command.sh` **sources** `.cc-mode` (`. "$dir/.cc-mode"`). A
+   goal is a free-text English sentence; an unquoted `goal=fix the parser`
+   line makes that source fail with `the: command not found`. The existing
+   `__cc_write_mode_file` scrubbing (newlines and `=`) does not address
+   spaces, because every other field is a single token.
+
+Reading the first user message costs nothing, needs no signature change and
+no new quoting rules, and works for every dispatch path — `cc-branch`,
+subagent dispatch, or a human who simply opens with what they want.
 
 ## Step 7: Remind user about /end
 

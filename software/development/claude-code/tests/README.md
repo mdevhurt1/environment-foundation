@@ -7,7 +7,7 @@
 Exit status is 0 only if every assertion passed. Output is TAP version 13, so
 any CI runner can consume it without a plugin.
 
-## Why these four functions
+## Why these functions
 
 `software/development/claude-code/` was ~1,892 lines of shell with no test of
 any kind. It mints session IDs, writes `.cc-mode`, resolves model and
@@ -25,8 +25,9 @@ report:
 |---|---|
 | `__cc_resolve_model` | A wrong model is not an error. It is a worse session and a larger bill. Claude Code's "Default" is a *moving referent*, so falling through to it reassigns sessions with no diff and no output. |
 | `__cc_resolve_perm` | Its fall-through line is a bare tab plus a source name. Lose the tab and the *value* becomes `settings-default`, which `claude` rejects — every launch dies. Gain a policy entry and the wrapper silently out-votes `settings.json permissions.defaultMode`. |
-| `__cc_write_mode_file` | `.cc-mode` is **sourced** by `statusline-command.sh:37`. A value containing a space, a quote or a `$(…)` is a shell bug in a file nobody reads. |
+| `__cc_write_mode_file` | `.cc-mode` used to be **sourced** by `statusline-command.sh`. A value containing a space, a quote or a `$(…)` was a shell bug in a file nobody reads. INFRA-45 gave the file a quoting contract; these tests are what hold it. |
 | `__cc_read_mode` | Walks upward from cwd. Stop the walk and a session simply stops knowing what it is. |
+| `statusline-command.sh` | The reader that ran that shell bug, once per repaint, in every session. It now parses `.cc-mode` against a key whitelist instead of sourcing it. |
 
 ## Why a hand-rolled harness and not bats
 
@@ -69,22 +70,38 @@ alone, which is what makes them CI-able.
 | `harness.sh` | Sourced assertion library. Not executable — it is not an entry point. |
 | `test_resolve_model.sh` | `__cc_resolve_model`: env override, policy lookup, `track-latest` pass-through, every refusal path. |
 | `test_resolve_perm.sh` | `__cc_resolve_perm`: the settings-default fall-through byte-for-byte, precedence, the deliberate asymmetry with the model resolver. |
-| `test_mode_file_roundtrip.sh` | `__cc_write_mode_file` / `__cc_read_mode` against all three real readers of `.cc-mode`. |
+| `test_mode_file_roundtrip.sh` | `__cc_write_mode_file` / `__cc_read_mode` against all three real readers of `.cc-mode`, plus the quoting contract (section 9). |
+| `test_statusline.sh` | `statusline-command.sh` end to end: badges, model drift, `CTX-WARN`, and a table of **hand-written** hostile `.cc-mode` files the writer-side fix cannot reach. |
 | `test_shellcheck.sh` | Static gate at `-S error` over every `*.sh` the module ships. |
-| `mutate.sh` | Breaks `cc-functions.sh` eight ways on a throwaway copy and asserts each break is caught. |
+| `mutate.sh` | Breaks `cc-functions.sh` and `statusline-command.sh` fourteen ways on throwaway copies and asserts each break is caught. |
 
-## `KNOWN DEFECT` assertions
+## The `.cc-mode` quoting contract
 
-Some assertions in `test_mode_file_roundtrip.sh` are prefixed `KNOWN DEFECT`.
-They **characterise** current behaviour rather than assert correct behaviour —
-`mode`, `slug` and `parent_repo` are written unscrubbed, so a value containing a
-space, a quote or a command substitution corrupts, truncates or executes when
-the statusline sources the file.
+`test_mode_file_roundtrip.sh` sections 3–6 used to carry assertions prefixed
+`KNOWN DEFECT`, which **characterised** the writer's behaviour rather than
+asserting correct behaviour, and which said in the file that they were
+"expected to fail the day the writer is fixed". INFRA-45 fixed it; they are
+restated against the contract, on their original fixtures, so the before/after
+is readable in one place.
 
-They are expected to fail the day the writer is fixed. That is the intended
-signal: come back and restate the contract, rather than discovering the change
-from a blank statusline. Do not "fix" them by scrubbing spaces — silently
-mangling a filesystem path is worse than the symptom. See the INFRA-39 report.
+The contract itself is stated once, in `canonical/shell/cc-functions.sh` above
+`__cc_mode_quote`. In brief: a value is written bare iff every character is in
+`[A-Za-z0-9_@%+:,./-]`, otherwise single-quoted with `'` escaped as `'\''`;
+line breaks are the one thing the format cannot hold and are stripped. The
+invariant section 9 enforces is that **sourcing a `.cc-mode` produced by
+`__cc_write_mode_file` can never execute anything and can never alter a field
+other than the one being assigned** — checked with an execution canary on the
+filesystem, not by reading output for an error message.
+
+Two rules for anyone extending this:
+
+- Do not make the encoding unconditional. Six other readers parse `.cc-mode`
+  with `grep '^key=' | cut -d= -f2-` and would all need changing in lockstep.
+  Section 9d pins the wire format for real values so this cannot happen by
+  accident.
+- Do not "fix" a hostile value by scrubbing it. Silently mangling a filesystem
+  path is worse than the symptom — that was true before the contract and it is
+  why the contract quotes rather than deletes.
 
 ## Adding a test
 
@@ -93,6 +110,10 @@ Copy the header of any `test_*.sh`: resolve `TESTS_DIR`/`MODULE_DIR`/
 `require_not_root`, source `$CC_FUNCTIONS_UNDER_TEST`, then `t_begin` … asserts
 … `t_finish`. `run-tests.sh` picks up `test_*.sh` automatically. Use
 `set -uo pipefail`, never `-e`: a reporter must run every assertion.
+
+A test file that exercises a script rather than a sourced function should read
+its subject from a `*_UNDER_TEST` variable the same way — `test_statusline.sh`
+uses `STATUSLINE_UNDER_TEST` — so `mutate.sh` can point it at a mutant.
 
 When you add a test for a behaviour that matters, add a mutation to
 `mutate.sh` that breaks it. An assertion that has never been seen to fail is

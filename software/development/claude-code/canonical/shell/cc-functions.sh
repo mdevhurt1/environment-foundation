@@ -380,6 +380,113 @@ __cc_company_tmux_ensure() {
     __cc_log "company tmux session created: $name"
 }
 
+# ---- the .cc-mode quoting contract ----
+#
+# .cc-mode was CONFIG THAT WAS ALSO CODE. canonical/statusline-command.sh
+# sourced it, once per repaint, in every session in every worktree -- so every
+# value in it was shell, and three separate defects followed from that one
+# fact (INFRA-45, all three reproduced against the real writer):
+#
+#   1. `slug=my thing` parses as the assignment `slug=my` PREFIXED to the
+#      command `thing`. A prefix assignment is scoped to that command's
+#      environment, so the field reads back EMPTY -- a total loss, not a
+#      truncation. That is why it never looked like a quoting bug to anyone
+#      watching a statusline: there was nothing on it to look wrong.
+#   2. `parent_repo=/tmp/we"ird` opens a quote that is never closed, and the
+#      shell swallows the rest of the file. Every field BELOW the bad line is
+#      lost while the fields above it survive. The damage is positional and
+#      silent: the fields that break are not the field that is malformed.
+#   3. `parent_id=$(touch /tmp/x)` RUNS. The old scrub removed newlines and
+#      '=', and a command substitution contains neither, so it reached the
+#      file intact and executed -- again on every repaint.
+#
+# Two independent things close that class, and both are done. The statusline
+# no longer SOURCES the file: it parses it against a whitelist of the three
+# keys it displays, so no .cc-mode from any origin -- this writer, an older
+# one, a hand edit, a restored backup, a stray file in a parent directory --
+# is executable by it any more. And this writer ENCODES its values, so a file
+# it produces is inert for anything else that does source it.
+#
+# THE CONTRACT
+#
+#   A value is written BARE if and only if every one of its characters is in
+#   the safe set [A-Za-z0-9_@%+:,./-]. The empty string qualifies, which is
+#   what keeps `perm_mode=` a legal line. Otherwise the value is written
+#   SINGLE-QUOTED, with each embedded ' rendered as the four characters '\''.
+#
+#   Newline and carriage return cannot be represented in a line-oriented
+#   format and are REMOVED at the write boundary. That is the only lossy
+#   transformation in the contract and it is the whole of it; every other byte
+#   round-trips, including the quote characters, $, `, \ and =.
+#
+#   INVARIANT: sourcing a .cc-mode produced by __cc_write_mode_file can never
+#   execute anything, and can never alter a field other than the one being
+#   assigned. tests/test_mode_file_roundtrip.sh section 9 asserts this against
+#   the real writer, with an execution canary on the filesystem rather than by
+#   reading the output for an error message.
+#
+# WHY CONDITIONAL QUOTING RATHER THAN "QUOTE EVERYTHING"
+#
+#   Unconditional quoting is simpler to state, and it was rejected on blast
+#   radius. Six other readers -- cc-tree-slot-write.sh, cc-tree-slot-update.sh,
+#   cc-status-scan.sh, cc-reclaim-window.sh, cc-plane-sync.sh and the
+#   session-start skill -- parse this file with `grep '^key=' | cut -d= -f2-`,
+#   and every one of them would begin seeing literal quote characters wrapped
+#   around ids it then matches against 22-hex. Every value the four wrappers
+#   write today is already a safe token, so a conditional encoder leaves real
+#   .cc-mode files BYTE-IDENTICAL and changes behaviour only for the values
+#   that were broken anyway. What makes a conditional defensible here is that
+#   the predicate is an ALLOW-list: a character nobody anticipated gets
+#   quoted, not passed through.
+#
+# WHY NOT "REFUSE AT THE WRITE BOUNDARY"
+#
+#   The other defensible shape, and it loses something real. parent_repo is a
+#   filesystem path handed in by all four wrappers as "$repo_root"; a checkout
+#   under a path containing a space is legal, and refusing it would convert a
+#   cosmetic statusline fault into a launch failure. Refusal also forecloses a
+#   free-text `goal=` line -- which INFRA-40 declined to write precisely
+#   because of defect 1, and which this contract now makes representable.
+
+# __cc_mode_quote <value> -- encode one .cc-mode value. Prints, does not log.
+__cc_mode_quote() {
+    local v="${1-}"
+    # The one lossy step. Done first so the safety predicate never has to
+    # reason about a value that spans lines.
+    v=${v//$'\n'/}
+    v=${v//$'\r'/}
+    # The safe set is ENUMERATED rather than written as A-Z/a-z/0-9 ranges on
+    # purpose: bracket ranges are resolved by the locale's collation, and this
+    # is a security predicate that must mean the same thing under every
+    # LC_COLLATE the operator might have set.
+    case "$v" in
+        *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_@%+:,./-]*)
+            printf "'%s'" "${v//\'/\'\\\'\'}" ;;
+        *)  printf '%s' "$v" ;;
+    esac
+}
+
+# __cc_mode_unquote <value> -- decode one .cc-mode value.
+#
+# A value that is not single-quoted is returned verbatim, which is what keeps
+# every .cc-mode written before this contract existed readable by the readers
+# that now decode. The one ambiguity that buys: a LEGACY bare value that
+# happens to both start and end with a single quote decodes to its interior.
+# No writer has ever produced one -- this encoder quotes any value containing
+# a quote -- and the alternative, a format marker on every line, would break
+# the six `cut -d= -f2-` readers the conditional encoding exists to protect.
+__cc_mode_unquote() {
+    local v="${1-}"
+    case "$v" in
+        "'"*"'")
+            v=${v#\'}
+            v=${v%\'}
+            printf '%s' "${v//\'\\\'\'/\'}"
+            ;;
+        *)  printf '%s' "$v" ;;
+    esac
+}
+
 __cc_write_mode_file() {
     # $1 = directory, $2 = mode, $3 = slug, $4 = parent_repo,
     # $5 = session_id, $6 = parent_id (may be empty for top-level launches),
@@ -388,23 +495,37 @@ __cc_write_mode_file() {
     # $9 = perm_mode (the --permission-mode value, or EMPTY for the
     #      settings-default path -- empty is a legal, expected value here),
     # $10 = perm_mode_source (env | policy:<role> | settings-default)
-    # Scrub newlines and '=' from session_id/parent_id at the write boundary
-    # so a malformed CC_PARENT_ID cannot inject extra .cc-mode keys. model and
-    # model_source are scrubbed of whitespace as well: the statusline SOURCES
-    # this file, so a value containing a space would break its shell parse.
-    # perm_mode/perm_mode_source get the same treatment for the same reason.
-    local _sid _pid _model _msrc _perm _psrc
-    _sid=$(printf '%s' "$5" | tr -d '\n=')
-    _pid=$(printf '%s' "${6:-}" | tr -d '\n=')
-    _model=$(printf '%s' "${7:-}" | tr -d "\n= \t")
-    _msrc=$(printf '%s' "${8:-}" | tr -d "\n= \t")
-    _perm=$(printf '%s' "${9:-}" | tr -d "\n= \t")
-    _psrc=$(printf '%s' "${10:-}" | tr -d "\n= \t")
+    #
+    # Every value goes through __cc_mode_quote -- including started_at, which
+    # this function computes rather than receives. Encoding a value the writer
+    # trusts costs nothing and removes the standing question of which fields
+    # are covered; the old code's answer to that question was "six of nine",
+    # and the three it left out were exactly the three that broke.
+    local _mode _slug _prepo _sid _pid _model _msrc _perm _psrc _started
+    _mode=$(__cc_mode_quote "$2")
+    _slug=$(__cc_mode_quote "$3")
+    _prepo=$(__cc_mode_quote "$4")
+    _sid=$(__cc_mode_quote "$5")
+    _pid=$(__cc_mode_quote "${6:-}")
+    _model=$(__cc_mode_quote "${7:-}")
+    _msrc=$(__cc_mode_quote "${8:-}")
+    _perm=$(__cc_mode_quote "${9:-}")
+    _psrc=$(__cc_mode_quote "${10:-}")
+    _started=$(__cc_mode_quote "$(date -Iseconds)")
+
+    # Quoting is lossless, so it is silent. Dropping a newline is not, so it
+    # is not: a session id that is quietly shorter than the one the caller
+    # passed is the kind of thing that gets diagnosed three tickets later.
+    case "$2$3$4$5${6:-}${7:-}${8:-}${9:-}${10:-}" in
+        *$'\n'*|*$'\r'*)
+            __cc_log "WARNING: .cc-mode: a line break in a value was dropped (the format is line-oriented)" ;;
+    esac
+
     cat > "$1/.cc-mode" <<EOF
-mode=$2
-slug=$3
-started_at=$(date -Iseconds)
-parent_repo=$4
+mode=$_mode
+slug=$_slug
+started_at=$_started
+parent_repo=$_prepo
 session_id=$_sid
 parent_id=$_pid
 model=$_model
@@ -616,17 +737,21 @@ cc-continue() {
     # caller's interactive shell and poisons the next claude invocation.
     local mode="" slug="" started_at="" parent_repo="" session_id="" model="" model_source=""
     local perm_mode="" perm_mode_source=""
+    # Split on the FIRST '=' only, then decode per the .cc-mode quoting
+    # contract. The decode is what lets a resume recover a parent_repo that
+    # contains a space -- and, for anything hostile, what keeps the value TEXT
+    # rather than something cc-continue goes on to expand.
     while IFS='=' read -r key val; do
         case "$key" in
-            mode)         mode="$val" ;;
-            slug)         slug="$val" ;;
-            started_at)   started_at="$val" ;;
-            parent_repo)  parent_repo="$val" ;;
-            session_id)   session_id="$val" ;;
-            model)        model="$val" ;;
-            model_source) model_source="$val" ;;
-            perm_mode)        perm_mode="$val" ;;
-            perm_mode_source) perm_mode_source="$val" ;;
+            mode)         mode=$(__cc_mode_unquote "$val") ;;
+            slug)         slug=$(__cc_mode_unquote "$val") ;;
+            started_at)   started_at=$(__cc_mode_unquote "$val") ;;
+            parent_repo)  parent_repo=$(__cc_mode_unquote "$val") ;;
+            session_id)   session_id=$(__cc_mode_unquote "$val") ;;
+            model)        model=$(__cc_mode_unquote "$val") ;;
+            model_source) model_source=$(__cc_mode_unquote "$val") ;;
+            perm_mode)        perm_mode=$(__cc_mode_unquote "$val") ;;
+            perm_mode_source) perm_mode_source=$(__cc_mode_unquote "$val") ;;
         esac
     done <<< "$mode_data"
 
@@ -1026,7 +1151,8 @@ cc-doctor() {
 # ---- export to subshells ----
 # Public wrappers depend on internal __cc_* helpers; export both so subshells
 # (e.g. `bash -c 'cc-explore foo'`) don't fail with "__cc_repo_root: not found".
-export -f __cc_color_or_plain __cc_die __cc_log __cc_repo_root __cc_mint_session_id __cc_write_mode_file __cc_write_sandbox_settings \
+export -f __cc_color_or_plain __cc_die __cc_log __cc_repo_root __cc_mint_session_id \
+          __cc_mode_quote __cc_mode_unquote __cc_write_mode_file __cc_write_sandbox_settings \
           __cc_read_mode __cc_find_sandbox_settings \
           __cc_model_policy_path __cc_resolve_model __cc_model_prepare __cc_model_flag_str \
           __cc_resolve_perm __cc_perm_modes __cc_perm_stage __cc_perm_prepare __cc_perm_flag_str \

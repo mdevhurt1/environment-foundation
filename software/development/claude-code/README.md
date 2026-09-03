@@ -112,6 +112,27 @@ outcome we want.
 override is as visible in the tree as a model choice is. On the settings-default
 path `perm_mode` is empty and `perm_mode_source=settings-default`.
 
+### The `.cc-mode` format
+
+One `key=value` per line. A value is written **bare** iff every character of it
+is in `[A-Za-z0-9_@%+:,./-]` (the empty string qualifies, which is what makes
+`perm_mode=` a legal line); otherwise it is **single-quoted**, with each
+embedded `'` written as `'\''`. A line break cannot be represented and is
+stripped at the write boundary — the only lossy step. Every value the wrappers
+write today is a bare token, so real files are unquoted in practice.
+
+The invariant, enforced by `tests/test_mode_file_roundtrip.sh`: **sourcing a
+`.cc-mode` produced by `__cc_write_mode_file` can never execute anything, and
+can never alter a field other than the one being assigned.**
+
+Nothing in this repo sources the file any more. `statusline-command.sh` parses
+it against a whitelist of the keys it displays, so a `.cc-mode` from *any*
+origin — an older writer, a hand edit, a restored backup — is inert to it. Use
+`__cc_mode_unquote` when reading a value that could be quoted; the six helpers
+that read ids and slugs with `grep '^key=' | cut -d= -f2-` are fine as they are,
+because those values are bare tokens. Full reasoning is in the contract comment
+above `__cc_mode_quote` in `canonical/shell/cc-functions.sh` (INFRA-45).
+
 **Workspace trust.** Claude Code asks interactively before touching a directory
 it has not been told to trust, and — measured on 2.1.236 — it asks under *every*
 permission mode, `--dangerously-skip-permissions` included. The bypass flag was

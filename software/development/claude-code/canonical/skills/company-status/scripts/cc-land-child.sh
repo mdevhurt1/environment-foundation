@@ -188,14 +188,16 @@ read_status() { printf '%s|%s' "$(fm "$slot" status)" "$(fm "$slot" ended_at)"; 
 # artefact on screen is informative; a normal-looking pane proves nothing.
 pane_diag() {
     command -v tmux >/dev/null 2>&1 || { printf 'no-tmux'; return; }
+    # Herestrings, not printf|grep -q: an early-exit consumer SIGPIPEs its
+    # producer under pipefail (INFRA-46 pattern, same as its siblings here).
     local out hits="" n
     out=$(tmux capture-pane -p -t "${TMUX_SESSION}:=${TASK}" 2>/dev/null) || { printf 'no-window'; return; }
-    out=$(printf '%s\n' "$out" | tail -n 40)
-    printf '%s\n' "$out" | grep -qF 'Keep this transcript'    && hits="${hits}${hits:+,}TRANSCRIPT_MENU"
-    printf '%s\n' "$out" | grep -qF 'Unknown command: /end'   && hits="${hits}${hits:+,}END_NOT_A_COMMAND"
-    printf '%s\n' "$out" | grep -qE 'In one sentence, what is this session for' && hits="${hits}${hits:+,}GOAL_PROMPT"
-    printf '%s\n' "$out" | grep -qF 'Do you trust the files'  && hits="${hits}${hits:+,}TRUST_DIALOG"
-    n=$(printf '%s\n' "$out" | grep -cE '^[[:space:]]*(❯[[:space:]]*)?[0-9]+\.[[:space:]]+[A-Za-z]' 2>/dev/null)
+    out=$(tail -n 40 <<<"$out")
+    grep -qF 'Keep this transcript'  <<<"$out" && hits="${hits}${hits:+,}TRANSCRIPT_MENU"
+    grep -qF 'Unknown command: /end' <<<"$out" && hits="${hits}${hits:+,}END_NOT_A_COMMAND"
+    grep -qE 'In one sentence, what is this session for' <<<"$out" && hits="${hits}${hits:+,}GOAL_PROMPT"
+    grep -qF 'Do you trust the files' <<<"$out" && hits="${hits}${hits:+,}TRUST_DIALOG"
+    n=$(grep -cE '^[[:space:]]*(❯[[:space:]]*)?[0-9]+\.[[:space:]]+[A-Za-z]' <<<"$out" 2>/dev/null)
     [ "${n:-0}" -ge 2 ] && hits="${hits}${hits:+,}NUMBERED_MENU"
     printf '%s' "${hits:-none}"
 }
@@ -257,7 +259,7 @@ echo "C1 status   : PASS (status=$st, ended_at=$ea)"
 porcelain=$(git -C "$wt" status --porcelain 2>&1)
 if [ -n "$porcelain" ]; then
     echo "C2 clean    : FAIL — uncommitted paths in $wt:"
-    printf '%s\n' "$porcelain" | head -10 | sed 's/^/              /'
+    head -10 <<<"$porcelain" | sed 's/^/              /'
     echo "REFUSED (C2): a dirty worktree means unfinished or unsaved work."
     exit 1
 fi
@@ -296,7 +298,7 @@ else
     main_porcelain=$(git -C "$repo_root" status --porcelain 2>&1)
     if [ -n "$main_porcelain" ] && [ "$ALLOW_DIRTY_MAIN" -eq 0 ]; then
         echo "REFUSED: the main worktree itself has uncommitted changes:"
-        printf '%s\n' "$main_porcelain" | head -5 | sed 's/^/              /'
+        head -5 <<<"$main_porcelain" | sed 's/^/              /'
         echo "  Merging now could entangle unrelated work. Commit/stash there first,"
         echo "  or re-run with --allow-dirty-main."
         exit 1

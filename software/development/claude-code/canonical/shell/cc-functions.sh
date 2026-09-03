@@ -438,10 +438,12 @@ __cc_pane_ready() {
 # first line. Only lines carrying the prompt marker are consulted, because
 # after submission the same text scrolls into the transcript region above.
 __cc_pane_holds_paste() {
+    # Herestrings, not printf|grep -q — the INFRA-46 SIGPIPE pattern; this
+    # function is sourced into pipefail scripts.
     local lines
-    lines=$(printf '%s\n' "$1" | grep -F '❯')
-    printf '%s\n' "$lines" | grep -Fq '[Pasted text' && return 0
-    [ -n "$2" ] && printf '%s\n' "$lines" | grep -Fq "$2" && return 0
+    lines=$(grep -F '❯' <<<"$1")
+    grep -Fq '[Pasted text' <<<"$lines" && return 0
+    [ -n "$2" ] && grep -Fq "$2" <<<"$lines" && return 0
     return 1
 }
 

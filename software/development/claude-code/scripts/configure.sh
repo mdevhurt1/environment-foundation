@@ -115,6 +115,11 @@ link "$CANONICAL/shell/cc-skills-inject.sh" "$CLAUDE_DIR/cc-skills-inject.sh"
 link "$CANONICAL/shell/cc-memory-inject.sh"      "$CLAUDE_DIR/cc-memory-inject.sh"
 link "$CANONICAL/shell/cc-memory-index-regen.sh" "$CLAUDE_DIR/cc-memory-index-regen.sh"
 
+# Plane bookend sync, invoked from session-start / end-conversation /
+# ring-maintenance. Until INFRA-46 this was the one shipped helper with no
+# link line, leaving the three skills on their skills/../shell/ fallback path.
+link "$CANONICAL/shell/cc-plane-sync.sh" "$CLAUDE_DIR/cc-plane-sync.sh"
+
 # ---- ~/.bashrc source line (idempotent) ----
 SOURCE_LINE='[ -f ~/.claude/cc-functions.sh ] && source ~/.claude/cc-functions.sh'
 if ! grep -Fxq "$SOURCE_LINE" "$HOME/.bashrc" 2>/dev/null; then
@@ -140,4 +145,6 @@ fi
 log_ok "Claude Code SOP configuration complete"
 log_info "Open a new shell (or 'source ~/.bashrc') to pick up cc-* wrappers"
 log_info "Run 'cc-doctor' to verify the install"
-[ -d "$BACKUP_DIR" ] && log_info "Pre-install state preserved at: $BACKUP_DIR"
+# The `|| true` is load-bearing: under `set -e`, a clean re-run (no backup
+# made) would otherwise turn this final `&&` into exit status 1 (INFRA-51).
+[ -d "$BACKUP_DIR" ] && log_info "Pre-install state preserved at: $BACKUP_DIR" || true

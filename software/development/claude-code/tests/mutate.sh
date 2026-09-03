@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Description: Mutation check — breaks cc-functions.sh and statusline-command.sh in known ways and asserts the test suite catches each one, so that a green run means something.
+# Description: Mutation check — breaks the shell subjects (cc-functions.sh, statusline-command.sh, doctor.sh, configure.sh, cc-plane-sync.sh) in known ways and asserts the test suite catches each one, so that a green run means something.
 # Profiles:    workstation, workplace
 # Platforms:   ubuntu-24.04, ubuntu-22.04 (WSL supported)
 # Dependencies: bash 4+, jq, python3, coreutils, the tests in this directory
@@ -26,10 +26,16 @@ require_not_root
 declare -A SUBJECTS=(
     [functions]="$MODULE_DIR/canonical/shell/cc-functions.sh"
     [statusline]="$MODULE_DIR/canonical/statusline-command.sh"
+    [doctor]="$MODULE_DIR/scripts/doctor.sh"
+    [configure]="$MODULE_DIR/scripts/configure.sh"
+    [planesync]="$MODULE_DIR/canonical/shell/cc-plane-sync.sh"
 )
 declare -A SUBJECT_ENV=(
     [functions]=CC_FUNCTIONS_UNDER_TEST
     [statusline]=STATUSLINE_UNDER_TEST
+    [doctor]=DOCTOR_UNDER_TEST
+    [configure]=CONFIGURE_UNDER_TEST
+    [planesync]=PLANE_SYNC_UNDER_TEST
 )
 
 # A test that has never been seen to fail proves nothing. Each mutation below
@@ -260,6 +266,126 @@ FROM
 TO
 )"
 
+# ---- doctor.sh (INFRA-50 push-lag check; INFRA-46 symlink roster) --------
+
+# Reverse the range and the check counts commits origin has that main lacks
+# — always 0 on a fully-fetched repo, so unpushed work reads as fully pushed.
+# The exact silent inversion this instrument exists to prevent.
+add_mut "push-lag counts the reversed range" test_doctor_push.sh \
+"$(cat <<'FROM'
+rev-list --count origin/main..main
+FROM
+)" "$(cat <<'TO'
+rev-list --count main..origin/main
+TO
+)" doctor
+
+add_mut "cc-plane-sync.sh drops out of the symlink roster" test_doctor_symlinks.sh \
+"$(cat <<'FROM'
+check_symlink "$CLAUDE_DIR/cc-plane-sync.sh"      "$EXPECTED_CANONICAL/shell/cc-plane-sync.sh"
+FROM
+)" "$(cat <<'TO'
+: # check_symlink dropped
+TO
+)" doctor
+
+# ---- configure.sh (INFRA-51 exit code; INFRA-46 link line) ---------------
+
+# The 25-day defect, reintroduced: under set -e the final `&&` with no backup
+# dir made every clean idempotent re-run exit 1 (audit F4.1).
+add_mut "clean re-run exits 1 again" test_configure.sh \
+"$(cat <<'FROM'
+[ -d "$BACKUP_DIR" ] && log_info "Pre-install state preserved at: $BACKUP_DIR" || true
+FROM
+)" "$(cat <<'TO'
+[ -d "$BACKUP_DIR" ] && log_info "Pre-install state preserved at: $BACKUP_DIR"
+TO
+)" configure
+
+add_mut "the cc-plane-sync link line is dropped" test_configure.sh \
+"$(cat <<'FROM'
+link "$CANONICAL/shell/cc-plane-sync.sh" "$CLAUDE_DIR/cc-plane-sync.sh"
+FROM
+)" "$(cat <<'TO'
+: # link dropped
+TO
+)" configure
+
+# ---- cc-plane-sync.sh ----------------------------------------------------
+
+# The whole reason the helper exists in this shape: every network failure
+# must warn and exit 0, or a UDM IPS event makes every session unstartable
+# (INFRA-37). One character reintroduces the hard failure.
+add_mut "a network failure blocks the bookend" test_plane_sync.sh \
+"$(cat <<'FROM'
+except SoftFail as e:
+    warn("%s — continuing; the bookend is not blocked on Plane" % e)
+    sys.exit(0)
+FROM
+)" "$(cat <<'TO'
+except SoftFail as e:
+    warn("%s — continuing; the bookend is not blocked on Plane" % e)
+    sys.exit(1)
+TO
+)" planesync
+
+# Invert the session-id assertion and a helper resolved from the wrong cwd
+# writes another lane's issue — the wrong-lane class the refusal guards.
+add_mut "the session-id mismatch refusal is inverted" test_plane_sync.sh \
+"$(cat <<'FROM'
+[ "$ASSERT_SESSION" != "$SESSION_ID" ]
+FROM
+)" "$(cat <<'TO'
+[ "$ASSERT_SESSION" = "$SESSION_ID" ]
+TO
+)" planesync
+
+# Narrow the no-write guard and `start` PATCHes issues that are already
+# started — an unidempotent bookend write on every session open.
+add_mut "start loses its already-started guard" test_plane_sync.sh \
+"$(cat <<'FROM'
+    if cur.get("group") not in ("backlog", "unstarted"):
+FROM
+)" "$(cat <<'TO'
+    if cur.get("group") not in ("backlog",):
+TO
+)" planesync
+
+# Break identity precedence 2: a .cc-mode plane_issue= pin stops beating the
+# task folder's plane.md back-reference.
+add_mut "the .cc-mode plane_issue pin is ignored" test_plane_sync.sh \
+"$(cat <<'FROM'
+    ISSUE_REF=$(mode_get plane_issue "$MODEF")          # precedence 2
+FROM
+)" "$(cat <<'TO'
+    ISSUE_REF=$(mode_get plane_issue_x "$MODEF")        # precedence 2
+TO
+)" planesync
+
+# ---- entry points (cc-functions.sh) --------------------------------------
+
+# The half-spawn, resurrected: a model refusal in cc-explore no longer
+# aborts, so the worktree and branch get created for a launch that dies.
+add_mut "cc-explore spawns past a model refusal" test_entry_points.sh \
+"$(cat <<'FROM'
+    __cc_model_prepare explore || return 1
+FROM
+)" "$(cat <<'TO'
+    __cc_model_prepare explore || true
+TO
+)"
+
+# cc-branch hands the PARENT's id to the child's launch string; the child
+# then asserts against its own .cc-mode and every /start refuses exit 3.
+add_mut "cc-branch launches the child under the parent's id" test_entry_points.sh \
+"$(cat <<'FROM'
+        "CC_SESSION_ID=$(printf '%q' "$child_session_id") claude${model_flag}${perm_flag}"
+FROM
+)" "$(cat <<'TO'
+        "CC_SESSION_ID=$(printf '%q' "$parent_session_id") claude${model_flag}${perm_flag}"
+TO
+)"
+
 # ==========================================================================
 
 WORK=$(mktemp -d) || exit 2
@@ -267,8 +393,8 @@ trap 'rm -rf "$WORK"' EXIT
 
 caught=0 survived=0 stale=0
 
-printf 'Mutation check: %s\n' "${SUBJECTS[functions]}"
-printf '                %s\n' "${SUBJECTS[statusline]}"
+printf 'Mutation check over %d subject(s):\n' "${#SUBJECTS[@]}"
+for s in "${!SUBJECTS[@]}"; do printf '  %s\n' "${SUBJECTS[$s]}"; done
 printf '(the checked-in files are never modified; mutants live under %s)\n\n' "$WORK"
 
 for i in "${!M_LABEL[@]}"; do

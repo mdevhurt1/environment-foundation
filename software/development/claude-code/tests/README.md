@@ -73,7 +73,13 @@ alone, which is what makes them CI-able.
 | `test_mode_file_roundtrip.sh` | `__cc_write_mode_file` / `__cc_read_mode` against all three real readers of `.cc-mode`, plus the quoting contract (section 9). |
 | `test_statusline.sh` | `statusline-command.sh` end to end: badges, model drift, `CTX-WARN`, and a table of **hand-written** hostile `.cc-mode` files the writer-side fix cannot reach. |
 | `test_shellcheck.sh` | Static gate at `-S error` over every `*.sh` the module ships. |
-| `mutate.sh` | Breaks `cc-functions.sh` and `statusline-command.sh` fourteen ways on throwaway copies and asserts each break is caught. |
+| `test_doctor_symlinks.sh` | `doctor.sh` symlink checks judge against the canonical (main-worktree) checkout, so branch and main runs agree (INFRA-47). |
+| `test_doctor_push.sh` | `doctor.sh` push-lag check: unpushed commits on main surface as a WARN with count and age (INFRA-50). |
+| `test_memory_inject.sh` | `cc-memory-inject.sh`: the SessionStart memory-index injection (AI_ST-69). |
+| `test_configure.sh` | `configure.sh` against a scaffold + sandbox HOME: full link set (incl. `cc-plane-sync.sh`, INFRA-46) and exit 0 on a clean idempotent re-run (INFRA-51). |
+| `test_plane_sync.sh` | `cc-plane-sync.sh`: usage refusals, identity precedence, the warn-and-exit-0 network contract, and the HTTP flows against a loopback fake Plane. |
+| `test_entry_points.sh` | The seven public `cc-*` entry points: refusals that must leave nothing behind, and spawn flows against claude/tmux shims (the half-spawn surface). |
+| `mutate.sh` | Breaks the five subjects (`cc-functions.sh`, `statusline-command.sh`, `doctor.sh`, `configure.sh`, `cc-plane-sync.sh`) twenty-four ways on throwaway copies and asserts each break is caught. |
 
 ## The `.cc-mode` quoting contract
 

@@ -182,11 +182,19 @@ if [ -n "$parent_id" ]; then
         # Idempotency guard: dedupe on (child session_id, verb=completion). A
         # completion already on the record means this child has been reported;
         # appending again would show the parent one child completing twice.
+        # Two shapes count as "already reported": the legacy heading this
+        # script used to write, and — since cc-event-emit.sh stamps events
+        # with the EMITTER's id — a rich completion the child wrote itself
+        # per the dispatch-brief protocol. Skipping the mechanical notice in
+        # that second case is deliberate: the 2026-09-03 audit counted 9
+        # no-content /end notices shadowing 5 rich child-authored summaries
+        # (delegation.md §4); one completion per child is the contract.
         existing=""
         for e in "$parent_events"/[0-9]*-*.md; do
             [ -f "$e" ] || continue
-            if grep -q '^verb: completion$' "$e" \
-               && grep -qxF "# Child session completed: $session_id" "$e"; then
+            grep -q '^verb: completion$' "$e" || continue
+            if grep -qxF "# Child session completed: $session_id" "$e" \
+               || grep -qxF "session_id: $session_id" "$e"; then
                 existing="$e"
                 break
             fi
@@ -195,8 +203,31 @@ if [ -n "$parent_id" ]; then
         if [ -n "$existing" ]; then
             echo "completion event: already recorded at $existing — not appending a duplicate"
         else
-            next=$(printf "%04d" $(( $(find "$parent_events" -name '*.md' 2>/dev/null | wc -l) + 1 )))
-            cat > "$parent_events/${next}-completion.md" <<EOF
+            # The body carries everything a MECHANICAL writer can know:
+            # the fact of completion, the slot, and whether the task-folder
+            # report exists. Substance beyond that is the child's job
+            # (cc-event-emit.sh enforces it on child-authored completions).
+            task_id=$( { grep -m1 '^task_id:' "$slot" || true; } | sed 's/^task_id:[[:space:]]*//')
+            report="$HOME/vault/20-surface/company/tasks/${task_id:-unknown}/report.md"
+            if [ -f "$report" ]; then
+                report_line="report: $report ($(wc -c < "$report" | tr -d ' ') bytes)"
+            else
+                report_line="report: NONE at $report — outcome must be in this dir's rich completion event, or is missing"
+            fi
+            body="The child session reported normal completion via its close bookend.
+slot: $HOME/vault/20-surface/company/tree/sessions/${session_id}.md
+$report_line"
+
+            emit_sh="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/cc-event-emit.sh"
+            if [ -f "$emit_sh" ] && out=$(bash "$emit_sh" --dir "$parent_events" \
+                    --session-id "$session_id" --verb completion --severity normal \
+                    --title "Child session completed: $session_id" \
+                    --body "$body" </dev/null); then
+                echo "completion event: $out"
+            else
+                echo "WARN: cc-event-emit.sh unavailable — falling back to legacy sequential event naming" >&2
+                next=$(printf "%04d" $(( $(find "$parent_events" -name '*.md' 2>/dev/null | wc -l) + 1 )))
+                cat > "$parent_events/${next}-completion.md" <<EOF
 ---
 event_id: $next
 session_id: $parent_id
@@ -207,10 +238,10 @@ severity: normal
 
 # Child session completed: $session_id
 
-The child session reported normal completion via /end.
-See its slot at \`$HOME/vault/20-surface/company/tree/sessions/${session_id}.md\`.
+$body
 EOF
-            echo "completion event: $parent_events/${next}-completion.md"
+                echo "completion event: $parent_events/${next}-completion.md"
+            fi
         fi
     fi
 fi

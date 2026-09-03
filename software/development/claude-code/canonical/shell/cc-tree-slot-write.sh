@@ -248,8 +248,26 @@ if [ -n "$parent_id" ]; then
         if [ -n "$existing" ]; then
             echo "spawned event: already recorded at $existing — not appending a duplicate"
         else
-            next=$(printf "%04d" $(( $(find "$parent_events" -name '*.md' 2>/dev/null | wc -l) + 1 )))
-            cat > "$parent_events/${next}-spawned.md" <<EOF
+            # Events are named and stamped by cc-event-emit.sh (AI_ST-74):
+            # monotonic epoch-based leading numbers, machine-true emitted_at.
+            # The old sequential NNNN- naming this block used to do is what
+            # poisoned the numeric read marker once epoch-named events (from
+            # dispatched children following the brief protocol) shared a dir.
+            # The helper sits beside this script in canonical/shell/, so
+            # resolve it relative to this file's real path — that works both
+            # from the repo and through the ~/.claude symlink.
+            emit_sh="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/cc-event-emit.sh"
+            if [ -f "$emit_sh" ] && out=$(bash "$emit_sh" --dir "$parent_events" \
+                    --session-id "$session_id" --verb spawned --severity info \
+                    --title "Child session spawned: $session_id" \
+                    --body "slug=$slug mode=$mode" </dev/null); then
+                echo "spawned event: $out"
+            else
+                # Legacy inline fallback: a spawned event the parent can see
+                # is worth more than naming purity. WARN so the gap is loud.
+                echo "WARN: cc-event-emit.sh unavailable — falling back to legacy sequential event naming" >&2
+                next=$(printf "%04d" $(( $(find "$parent_events" -name '*.md' 2>/dev/null | wc -l) + 1 )))
+                cat > "$parent_events/${next}-spawned.md" <<EOF
 ---
 event_id: $next
 session_id: $parent_id
@@ -262,7 +280,8 @@ severity: info
 
 slug=$slug mode=$mode
 EOF
-            echo "spawned event: $parent_events/${next}-spawned.md"
+                echo "spawned event: $parent_events/${next}-spawned.md"
+            fi
         fi
     fi
 fi

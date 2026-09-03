@@ -380,6 +380,146 @@ __cc_company_tmux_ensure() {
     __cc_log "company tmux session created: $name"
 }
 
+# ---- EA action trail (AI_ST-73) ----
+# One line per mechanical action, appended by the helpers below and by the EA
+# by hand (cc-ea-log), so the mechanics/judgement split stops being
+# unmeasurable. The writer is canonical/shell/cc-ea-log.sh; these resolve it
+# the same way __cc_model_policy_path resolves the policy: an explicit env
+# override, the configure.sh symlink, the skills-symlink route that works
+# before configure.sh has grown a link line, then the repo copy beside the
+# live cc-functions.sh symlink.
+__cc_ea_log_helper_path() {
+    local p ccf
+    for p in "${CC_EA_LOG_SH:-}" \
+             "$HOME/.claude/cc-ea-log.sh" \
+             "$HOME/.claude/skills/../shell/cc-ea-log.sh"; do
+        [ -n "$p" ] && [ -f "$p" ] && { printf '%s' "$p"; return 0; }
+    done
+    ccf=$(readlink -f "$HOME/.claude/cc-functions.sh" 2>/dev/null) || return 1
+    case "$ccf" in
+        */shell/cc-functions.sh)
+            p="${ccf%/cc-functions.sh}/cc-ea-log.sh"
+            [ -f "$p" ] && { printf '%s' "$p"; return 0; }
+            ;;
+    esac
+    return 1
+}
+
+# __cc_ea_log_safe <cc-ea-log args...> -- best-effort trail append. NEVER
+# fatal and NEVER noisy: a broken logger must not cost a spawn, and a helper
+# that is not installed yet (pre-merge) must not spam every dispatch.
+__cc_ea_log_safe() {
+    local h
+    h=$(__cc_ea_log_helper_path) || return 0
+    bash "$h" "$@" >/dev/null 2>&1 || true
+}
+
+# ---- brief delivery (AI_ST-72 / AI_ST-40) ----
+# The paste-verify-Enter dance, exactly as AI_ST-40 specifies it:
+# load-buffer + paste-buffer (NOT send-keys -l: bracketed paste is what keeps
+# a multi-line brief one message instead of one submit per newline), settle,
+# VERIFY the paste landed before any Enter, submit, then handle the
+# paste-then-Enter race (inbox note 2026-05-11) by re-sending a single Enter
+# if the input line still shows the pasted-text placeholder.
+#
+# Tunables (env, mostly for tests): CC_BRIEF_SETTLE (default 5s),
+# CC_BRIEF_READY_TIMEOUT (default 90s), CC_BRIEF_POLL (default 3s).
+
+# __cc_pane_ready <pane-text> -- claude's TUI has rendered its input box.
+# The prompt marker ❯ is rendered from first paint on (measured on 2.1.236,
+# 2026-09-03, via capture-pane on a live session); a still-launching window
+# shows shell output or nothing.
+__cc_pane_ready() {
+    case "$1" in *"❯"*) return 0 ;; *) return 1 ;; esac
+}
+
+# __cc_pane_holds_paste <pane-text> <probe> -- the input line still holds
+# content: either tmux/claude's multi-line placeholder or the brief's own
+# first line. Only lines carrying the prompt marker are consulted, because
+# after submission the same text scrolls into the transcript region above.
+__cc_pane_holds_paste() {
+    # Herestrings, not printf|grep -q — the INFRA-46 SIGPIPE pattern; this
+    # function is sourced into pipefail scripts.
+    local lines
+    lines=$(grep -F '❯' <<<"$1")
+    grep -Fq '[Pasted text' <<<"$lines" && return 0
+    [ -n "$2" ] && grep -Fq "$2" <<<"$lines" && return 0
+    return 1
+}
+
+# __cc_deliver_brief <tmux-target> <brief-file> [<task-id>]
+# Returns 0 only when the brief was pasted, verified, and submitted. Any
+# other outcome WARNs with the exact by-hand commands and returns 1 — the
+# window is left alone for the EA; a blind Enter into an unverified pane is
+# the one move this function refuses to make.
+__cc_deliver_brief() {
+    local target="$1" file="$2" task="${3:-}"
+    local settle="${CC_BRIEF_SETTLE:-5}" ready_timeout="${CC_BRIEF_READY_TIMEOUT:-90}" poll="${CC_BRIEF_POLL:-3}"
+    [ "$poll" -ge 1 ] 2>/dev/null || poll=1
+    local pane waited=0 probe
+    if [ ! -f "$file" ]; then
+        __cc_die "brief file not found: $file"
+        return 1
+    fi
+    # First 24 chars of the brief's first line: enough to recognise, short
+    # enough to survive pane wrapping. Matched with grep -F, never as a regex.
+    probe=$(head -n 1 "$file" | cut -c1-24)
+
+    while :; do
+        pane=$(tmux capture-pane -p -t "$target" 2>/dev/null) || pane=""
+        __cc_pane_ready "$pane" && break
+        if [ "$waited" -ge "$ready_timeout" ]; then
+            __cc_log "WARNING: brief NOT delivered — no input prompt in $target after ${ready_timeout}s."
+            __cc_log "  by hand: tmux load-buffer -b brief '$file' && tmux paste-buffer -d -b brief -t '$target'"
+            __cc_log "           verify with: tmux capture-pane -p -t '$target' | tail -5"
+            __cc_log "           then: tmux send-keys -t '$target' Enter"
+            return 1
+        fi
+        sleep "$poll"
+        waited=$((waited + poll))
+    done
+
+    tmux load-buffer -b cc-brief "$file" || { __cc_die "tmux load-buffer failed for $file"; return 1; }
+    tmux paste-buffer -d -b cc-brief -t "$target" || { __cc_die "tmux paste-buffer failed for $target"; return 1; }
+    sleep "$settle"
+
+    pane=$(tmux capture-pane -p -t "$target" 2>/dev/null) || pane=""
+    if ! __cc_pane_holds_paste "$pane" "$probe"; then
+        # One retry: a paste can land in a TUI mid-repaint.
+        tmux load-buffer -b cc-brief "$file" 2>/dev/null \
+            && tmux paste-buffer -d -b cc-brief -t "$target" 2>/dev/null
+        sleep "$settle"
+        pane=$(tmux capture-pane -p -t "$target" 2>/dev/null) || pane=""
+        if ! __cc_pane_holds_paste "$pane" "$probe"; then
+            __cc_log "WARNING: paste could not be VERIFIED in $target — refusing to press Enter blind."
+            __cc_log "  inspect: tmux capture-pane -p -t '$target' | tail -20"
+            __cc_log "  the brief file is untouched at: $file"
+            return 1
+        fi
+    fi
+
+    tmux send-keys -t "$target" Enter
+    sleep "$settle"
+
+    # The paste-then-Enter race: if the input line still holds the paste, the
+    # Enter arrived before the TUI finished ingesting it. One more Enter is
+    # the documented mitigation; a second failure goes back to the operator.
+    pane=$(tmux capture-pane -p -t "$target" 2>/dev/null) || pane=""
+    if __cc_pane_holds_paste "$pane" "$probe"; then
+        tmux send-keys -t "$target" Enter
+        sleep "$settle"
+        pane=$(tmux capture-pane -p -t "$target" 2>/dev/null) || pane=""
+        if __cc_pane_holds_paste "$pane" "$probe"; then
+            __cc_log "WARNING: brief pasted but SUBMIT unverified in $target (input line still holds it)."
+            __cc_log "  press Enter there yourself: tmux send-keys -t '$target' Enter"
+            return 1
+        fi
+    fi
+
+    __cc_log "brief delivered and submitted: $target ($(wc -c < "$file" | tr -d ' ') bytes from $file)"
+    return 0
+}
+
 # ---- the .cc-mode quoting contract ----
 #
 # .cc-mode was CONFIG THAT WAS ALSO CODE. canonical/statusline-command.sh
@@ -940,11 +1080,36 @@ cc-branch() {
             'cc-branch' "${CC_FUNCTIONS_SH:-$HOME/.claude/cc-functions.sh}" >&2
         return 127
     }
-    local task_id="${1:-}"
-    local repo_arg="${2:-}"
+    # Positional args as before; --brief <file> may appear anywhere. The brief
+    # is delivered into the child's window after launch via the AI_ST-40
+    # paste-verify-Enter dance (__cc_deliver_brief), so an autonomous child
+    # costs the EA zero manual touches on the happy path (AI_ST-72).
+    local task_id="" repo_arg="" brief_file=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --brief)
+                [ $# -ge 2 ] || { __cc_die "--brief needs a file"; return 1; }
+                brief_file="$2"; shift 2 ;;
+            --brief=*) brief_file="${1#*=}"; shift ;;
+            -*) __cc_die "unknown option: $1 (usage: cc-branch [--brief <file>] <task-id> [<repo-path>])"; return 1 ;;
+            *)
+                if [ -z "$task_id" ]; then task_id="$1"
+                elif [ -z "$repo_arg" ]; then repo_arg="$1"
+                else __cc_die "too many arguments (usage: cc-branch [--brief <file>] <task-id> [<repo-path>])"; return 1
+                fi
+                shift ;;
+        esac
+    done
 
     if [ -z "$task_id" ]; then
-        __cc_die "usage: cc-branch <task-id> [<repo-path>]"
+        __cc_die "usage: cc-branch [--brief <file>] <task-id> [<repo-path>]"
+        return 1
+    fi
+
+    # Validate the brief BEFORE any side effects, same rule as the model and
+    # permission resolvers: a typo'd path must not leave a worktree behind.
+    if [ -n "$brief_file" ] && [ ! -f "$brief_file" ]; then
+        __cc_die "brief file not found: $brief_file"
         return 1
     fi
 
@@ -1087,6 +1252,23 @@ cc-branch() {
         "CC_SESSION_ID=$(printf '%q' "$child_session_id") claude${model_flag}${perm_flag}"
 
     __cc_log "branched: tmux window '$window_name' in session '$tmux_name'"
+    __cc_ea_log_safe --task "$task_id" dispatch \
+        "window ${tmux_name}:${window_name} created (child=$child_session_id model=$__cc_model_value)"
+
+    if [ -n "$brief_file" ]; then
+        # `=` forces exact window-NAME matching; a numeric task_id would
+        # otherwise be parsed as a window index.
+        if __cc_deliver_brief "${tmux_name}:=${window_name}" "$brief_file" "$task_id"; then
+            __cc_ea_log_safe --task "$task_id" brief \
+                "delivered+submitted $(wc -c < "$brief_file" | tr -d ' ')B from $brief_file"
+        else
+            # The window stays up — the spawn succeeded; only the first
+            # message is missing. Loud, logged, and left for the operator.
+            __cc_log "WARNING: child '$task_id' is running but has NO brief — it will idle until one arrives."
+            __cc_ea_log_safe --task "$task_id" brief \
+                "DELIVERY FAILED from $brief_file — manual paste needed"
+        fi
+    fi
 }
 
 # ---- cc-teleport <task-id> ----
@@ -1134,6 +1316,51 @@ cc-teleport() {
     fi
 }
 
+# ---- cc-ea-log (delegates to script; AI_ST-73) ----
+# Manual trail entries for the actions no helper can see: report reads, brief
+# composition, escalation rulings. e.g.
+#   cc-ea-log --task SENT-4 read-report "29KB report, verdict: hold merge"
+#   cc-ea-log compose-brief "INFRA-45 brief, ~12 min"
+cc-ea-log() {
+    # Snapshot guard — see "why the helpers are named __cc_*" at the top of this
+    # file. Re-source if the helpers are absent; abort before any side effects.
+    typeset -f __cc_die >/dev/null 2>&1 || \
+        . "${CC_FUNCTIONS_SH:-$HOME/.claude/cc-functions.sh}" 2>/dev/null
+    typeset -f __cc_die >/dev/null 2>&1 || {
+        printf '[cc] %s: cc helpers unavailable (tried %s); aborting before side effects\n' \
+            'cc-ea-log' "${CC_FUNCTIONS_SH:-$HOME/.claude/cc-functions.sh}" >&2
+        return 127
+    }
+    local h
+    if ! h=$(__cc_ea_log_helper_path); then
+        __cc_die "cc-ea-log.sh not found (looked at \$CC_EA_LOG_SH, ~/.claude/, and the canonical shell dir)"
+        return 1
+    fi
+    bash "$h" "$@"
+}
+
+# ---- cc-land (delegates to script; AI_ST-72) ----
+# One verified invocation for a finished child: merge its branch into local
+# main, then run the four-gate window reclaim. See cc-land-child.sh for the
+# gates, the close-stall diagnosis, and why nothing here ever pushes.
+cc-land() {
+    # Snapshot guard — see "why the helpers are named __cc_*" at the top of this
+    # file. Re-source if the helpers are absent; abort before any side effects.
+    typeset -f __cc_die >/dev/null 2>&1 || \
+        . "${CC_FUNCTIONS_SH:-$HOME/.claude/cc-functions.sh}" 2>/dev/null
+    typeset -f __cc_die >/dev/null 2>&1 || {
+        printf '[cc] %s: cc helpers unavailable (tried %s); aborting before side effects\n' \
+            'cc-land' "${CC_FUNCTIONS_SH:-$HOME/.claude/cc-functions.sh}" >&2
+        return 127
+    }
+    local s="${CC_LAND_CHILD_SH:-$HOME/.claude/skills/company-status/scripts/cc-land-child.sh}"
+    if [ ! -f "$s" ]; then
+        __cc_die "cc-land-child.sh not found at $s (is the skills symlink installed?)"
+        return 1
+    fi
+    bash "$s" "$@"
+}
+
 # ---- cc-doctor (delegates to script) ----
 cc-doctor() {
     # Snapshot guard — see "why the helpers are named __cc_*" at the top of this
@@ -1158,4 +1385,7 @@ export -f __cc_color_or_plain __cc_die __cc_log __cc_repo_root __cc_mint_session
           __cc_resolve_perm __cc_perm_modes __cc_perm_stage __cc_perm_prepare __cc_perm_flag_str \
           __cc_trust_effective __cc_trust_register \
           __cc_company_tmux_session __cc_company_tmux_exists __cc_company_tmux_ensure \
-          cc cc-branch cc-teleport cc-explore cc-build cc-continue cc-doctor 2>/dev/null || true
+          __cc_ea_log_helper_path __cc_ea_log_safe \
+          __cc_pane_ready __cc_pane_holds_paste __cc_deliver_brief \
+          cc cc-branch cc-teleport cc-explore cc-build cc-continue cc-doctor \
+          cc-ea-log cc-land 2>/dev/null || true

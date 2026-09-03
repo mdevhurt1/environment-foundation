@@ -82,15 +82,36 @@ surface from its verifier.)
 
 ## Escalation / completion protocol
 
-Write event files to
-`~/vault/20-surface/company/tree/sessions/{{parent_session_id}}.events/`,
-named `<epoch-seconds>-<verb>.md`, frontmatter: `event_id` (the epoch),
-`session_id` (yours), `emitted_at` (ISO-8601 from `date -Is`), `verb`
-(`blocker`|`question`|`status`|`completion`), `severity`
-(`info`|`normal`|`critical`). Body: what you need and what you ruled out.
-Escalate and keep working on what isn't blocked; never idle for a human.
+Emit events with the stamping helper — never write event files by hand
+(hand-authored `emitted_at` stamps were wrong 4 times out of 6 in the
+2026-09-03 audit, and hand-chosen names have poisoned the parent's read
+marker; the helper names and stamps correctly by construction):
 
-On completion, emit a completion event carrying {{the per-task outcome
-summary}} and the report path. Then invoke the `end-conversation` skill
-via the Skill tool (the Skill tool form — `/end` is not a command and a
-child waiting on it stalls; verified 2026-09-03).
+```bash
+bash ~/.claude/skills/../shell/cc-event-emit.sh \
+  --to-session {{parent_session_id}} \
+  --verb status|question|blocker|completion --severity info|normal|critical \
+  --title "one line" --body "$(cat <<'EOF'
+...body...
+EOF
+)"
+```
+
+Events-channel content convention (the channel carries decisions, not
+pointers): a `blocker`/`question` body states what you need AND what you
+already ruled out. A `completion` body carries at least three non-empty
+lines — (1) the outcome per ticket/deliverable, (2) what needs the EA's
+action (or "none"), (3) the report path. The helper refuses thinner
+completions; `--allow-thin` is the on-the-record override. Escalate and
+keep working on what isn't blocked; never idle for a human.
+
+<!-- EA: if this brief predates the helper reaching ~/.claude (check with
+     `ls ~/.claude/skills/../shell/cc-event-emit.sh`), fall back to hand
+     rules: name `<epoch-seconds>-<verb>.md`, frontmatter `event_id` (the
+     epoch), `session_id` (yours), `emitted_at` (from `date -Is`, never
+     typed from memory), `verb`, `severity` — same content convention. -->
+
+On completion, emit a completion event per the convention above. Then
+invoke the `end-conversation` skill via the Skill tool (the Skill tool
+form — `/end` is not a command and a child waiting on it stalls; verified
+2026-09-03).

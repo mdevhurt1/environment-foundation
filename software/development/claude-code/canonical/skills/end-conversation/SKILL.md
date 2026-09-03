@@ -21,10 +21,11 @@ session is forfeit.
 ## Checklist (you MUST complete each item, in order)
 
 - [ ] Step 1: Memory delta review
+- [ ] Step 1a: Post-rewrite/post-archive corpus sweep (conditional)
 - [ ] Step 2: Specs/plans capture
 - [ ] Step 2a: Update the Plane issue (one question, then write)
 - [ ] Step 3: Transcript decision
-- [ ] Step 4: Memory sync to vault
+- [ ] Step 4: Memory index reconciliation
 - [ ] Step 5: Promotion candidates
 - [ ] Step 6: Worktree fold (exploration mode only)
 - [ ] Step 7: Update the session's tree slot
@@ -32,16 +33,68 @@ session is forfeit.
 
 ## Step 1: Memory delta review
 
-Diff `~/.claude/projects/-home-mhurt/memory/` against where it stood at
-session start. (You can approximate by checking `git log` of that dir if
-it's tracked, or by listing files modified in the last hour.)
+The memory store is `~/vault/20-surface/claude-memory/` (the auto-memory
+location override in CLAUDE.md — NOT the default
+`~/.claude/projects/<enc>/memory/`, which is empty everywhere). The delta
+reference is this session's own start time, which `.cc-mode` already
+records — no marker file exists or is needed. (Repaired 2026-09-03,
+INFRA-48: the previous version of this step diffed a nonexistent directory
+against a marker nothing wrote, and had silently found nothing since the
+location override landed.)
 
 ```bash
-find ~/.claude/projects/-home-mhurt/memory/ -type f -newer /tmp/.session-start-marker 2>/dev/null
+mode_file=$(dir=$(pwd); while [ "$dir" != / ]; do [ -f "$dir/.cc-mode" ] && echo "$dir/.cc-mode" && break; dir=$(dirname "$dir"); done)
+started_at=$(grep '^started_at=' "$mode_file" 2>/dev/null | cut -d= -f2-)
+if [ -n "$started_at" ]; then
+  find ~/vault/20-surface/claude-memory/ -name '*.md' ! -name MEMORY.md -newermt "$started_at"
+else
+  echo "(no .cc-mode started_at — bare session; falling back to last 6 hours)"
+  find ~/vault/20-surface/claude-memory/ -name '*.md' ! -name MEMORY.md -mmin -360
+fi
 ```
 
 For each new/modified file, summarize the change in one line and ask the
-user: keep / edit / discard. Apply their decision.
+user: keep / edit / discard. Apply their decision. (Autonomous sessions:
+decide yourself against the brief's deliverables; note the decision in the
+final report instead of asking.)
+
+## Step 1a: Post-rewrite/post-archive corpus sweep (conditional)
+
+Runs only when this session did either of these things; otherwise skip:
+
+- **rewrote git history** in any repo (rebase/filter-repo/force-move of
+  published commits), or
+- **moved or archived vault content that memories point at** (e.g. a
+  `tasks/<id>/` folder into `tasks/_archive/`).
+
+Both events invalidate referents recorded in the memory corpus — every
+memory citing a pre-rewrite hash or a pre-move path now misinforms its
+reader. The 2026-08-20 sentinel history rewrite and the task-folder archive
+sweep were never followed by such a pass, and by 2026-09-03 41% of sampled
+checkable reference memories carried a dead or false referent (AI_ST-70).
+This step exists so that cannot silently happen again. It lives HERE, not
+in ring-maintenance, because the session that performed the rewrite is the
+only actor that knows it happened and what the old referents looked like —
+a weekly GC discovers the contamination up to a week late, after other
+sessions have already recalled the false claims.
+
+Sweep mechanics (scale to the event — a one-folder archive needs one grep;
+a history rewrite needs the hash sweep):
+
+```bash
+# hashes: list memories citing any 7-40 hex string, then check each cited
+# hash against the rewritten repo with `git cat-file -t <hash>`
+grep -rlnE '\b[0-9a-f]{7,40}\b' ~/vault/20-surface/claude-memory/ --include='*.md' -l
+# paths: memories citing the moved path
+grep -rln '<old-path-fragment>' ~/vault/20-surface/claude-memory/ --include='*.md'
+```
+
+Correct each hit (prefer a dated scope note over deletion when the lesson
+has residual value), then regenerate the index:
+`bash ~/.claude/cc-memory-index-regen.sh`. If the sweep is too large to
+finish at close, record the debt: write the grep hit-list to the session's
+task folder and emit a `blocker`-severity event to your parent rather than
+dropping it.
 
 ## Step 2: Specs/plans capture
 
@@ -131,13 +184,21 @@ This is a thinking moment, not a checkbox. The honest answer is usually
 remind them surface ring noise dilutes signal.
 
 If yes:
-1. Find the transcript path. Claude Code writes them to
-   `~/.claude/projects/-home-mhurt/<session-id>.jsonl`.
+1. Find the transcript path. Claude Code encodes the session's **full cwd**
+   into the project directory (`/` → `-`), so a worktree session's
+   transcript is NOT under `-home-mhurt`. (Repaired 2026-09-03, INFRA-48:
+   the hardcoded `-home-mhurt` path only ever matched sessions launched
+   from `$HOME`.) The current session's transcript is the newest JSONL in
+   the encoded-cwd directory:
+   ```bash
+   transcript=$(ls -t ~/.claude/projects/"$(pwd | tr '/' '-')"/*.jsonl 2>/dev/null | head -1)
+   echo "$transcript"
+   ```
 2. Render to markdown using the helper:
    ```bash
    slug=$(echo "$session_goal" | tr -cs 'A-Za-z0-9' '-' | tr A-Z a-z | sed 's/^-//;s/-$//')
    ~/.claude/skills/end-conversation/render-transcript.sh \
-     ~/.claude/projects/-home-mhurt/<session-id>.jsonl \
+     "$transcript" \
      ~/vault/20-surface/claude-transcripts/$(date +%Y-%m-%d)-${slug}.md \
      "$session_goal"
    ```
@@ -145,14 +206,25 @@ If yes:
 If no: nothing — the JSONL stays in `~/.claude/projects/` (purgeable
 when you next clean up).
 
-## Step 4: Memory sync to vault
+## Step 4: Memory index reconciliation
 
-For each memory file approved in Step 1, copy it into the vault:
+(Repaired 2026-09-03, INFRA-48: this step used to `cp` from the empty
+default memory location into the vault — a structural no-op, since the
+location override means memories are written straight to the vault. There
+is nothing to sync; what needs keeping true is the INDEX.)
+
+If Step 1 found any new, renamed, or re-described memory files, regenerate
+the compacted index so every memory has a current one-line entry:
+
 ```bash
-mkdir -p ~/vault/20-surface/claude-memory
-cp ~/.claude/projects/-home-mhurt/memory/*.md ~/vault/20-surface/claude-memory/
-cp ~/.claude/projects/-home-mhurt/memory/MEMORY.md ~/vault/20-surface/claude-memory/
+bash ~/.claude/cc-memory-index-regen.sh
 ```
+
+The regenerator derives each line from the memory file's frontmatter
+`description:`, so fixing a description IS fixing the index. Never
+hand-write essays into MEMORY.md — it is injected into every session by the
+`cc-memory-inject.sh` SessionStart hook, and its size is a per-session
+context tax (AI_ST-69 compacted it 65K → ~14K tokens).
 
 LiveSync handles cross-machine conflict resolution. Memory files are
 treated as user-level (not machine-level); refuse to write any

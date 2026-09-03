@@ -1,6 +1,6 @@
 ---
 name: ring-maintenance
-description: Manual weekly bookend that maintains the Obsidian vault's rings. Garbage-collects the surface ring (memory index, tree slots, task folders, command-center state) via a read-only subagent, then walks the promotion backlog with the CEO. Invoked with /ring-maintenance from the EA session. Complements end-conversation, which handles per-session hygiene only.
+description: Manual weekly bookend that maintains the Obsidian vault's rings. Garbage-collects the surface ring (memory index, tree slots, task folders, command-center state) via a read-only subagent, then walks the promotion backlog with the CEO. Invoke from the EA session via the Skill tool, or with the slash command /ring-maintenance. Complements end-conversation, which handles per-session hygiene only.
 ---
 
 # ring-maintenance — weekly ring maintenance
@@ -15,6 +15,7 @@ Run weekly from the EA (command-center) session.
 
 - [ ] Step 1: Preflight — mode, vault, Obsidian
 - [ ] Step 2: Run the scan
+- [ ] Step 2a: Run the board-health check (read-only)
 - [ ] Step 3: Phase 1 — dispatch the read-only GC subagent
 - [ ] Step 4: Phase 1 — execute auto fixes, confirm proposals
 - [ ] Step 5: Phase 2 — walk the promotion queue with the CEO
@@ -81,6 +82,49 @@ all under `~/vault/20-surface/`, are: memory files in `claude-memory/`,
 tree slots in `company/tree/sessions/`, task folders in `company/tasks/`,
 and `state/` is `company/_command-center/state/`. Every source path and
 every `_archive/` destination in Step 4 is relative to these.
+
+## Step 2a: Run the board-health check
+
+The scan in Step 2 measures the vault. This measures the *board*, which drifts
+the same way and for the same reason — nothing in the working loop touches it
+unless something makes it. Run:
+
+```bash
+sync=~/.claude/cc-plane-sync.sh
+[ -f "$sync" ] || sync=~/.claude/skills/../shell/cc-plane-sync.sh
+[ -f "$sync" ] && bash "$sync" health \
+  || echo "plane-sync: helper not installed — skipping Plane sync (run cc-doctor)"
+```
+
+**Strictly read-only.** It never PATCHes, closes, creates or comments —
+a staleness detector that closes things is how a backlog gets cancelled
+instead of triaged. There is no confirmation step and no action tier here:
+every row is REPORT-ONLY, exactly like `report.dead_links`.
+
+It prints one board-health line per project plus its findings, implementing
+the three checks from
+`~/vault/20-surface/company/tasks/plane-system-of-record/convention.md` §4:
+
+1. **No active cycle** — a project with live work and no cycle spanning today
+   has stopped tracking time. Binary; no tuning.
+2. **Started but quiet** — a `started` issue asserts someone is working on it
+   *now*, so it gets a 7-day leash (`STARTED_QUIET_DAYS`). Backlog items get
+   21 (`BACKLOG_QUIET_DAYS`).
+3. **The board disagrees with the fleet** — running tree slots' `task_id`
+   against issues in a `started` state, both directions. *Live session, issue
+   not started* means the board is behind reality. *Issue started, no live
+   session* means a session died without its bookend, which is the leak that
+   produces zombie `In Progress` items.
+
+Carry the output into the health report (Step 6) as its own section. If the
+same warning stands for more than a few days running, the board is drifting
+again and the answer is a triage pass, not a bigger checker.
+
+This lives here because `ring-maintenance` is the weekly cross-cutting pass
+and these checks are cross-cutting by construction — no single session can see
+them. The convention also wants the same two-line summary in the EA's morning
+brief; wiring that into `company-status` is a separate change and is not made
+here.
 
 ## Step 3: Phase 1 — dispatch the read-only GC subagent
 
@@ -318,7 +362,11 @@ Write `state/ring-health-YYYY-MM-DD.md` with these sections, in order:
 4. **Canon writes log** — path per note written to `10-middle` this pass
 5. Promotion: `processed / deferred / remaining` counts
 6. Report-only findings
-7. Anomalies
+7. **Board health** — Step 2a's output verbatim, one line per project plus
+   its findings. Keeping it per-run is what makes drift legible: a warning
+   that appears in one report is noise, the same warning in four consecutive
+   reports is a board that has stopped being maintained.
+8. Anomalies
 
 The canon-writes log is load-bearing: it is what next week's canon-leak
 check (`report.canon_leak`, remit 7) reads to tell an approved write from a

@@ -1,6 +1,6 @@
 ---
 name: session-start
-description: Bookend skill that runs at session front. Verifies launch mode, surfaces relevant vault context for the declared goal, and locks in the session metadata used by end-conversation. Loaded automatically via SessionStart hook; can also be invoked manually with /start to re-orient mid-session.
+description: Bookend skill that runs at session front. Verifies launch mode, surfaces relevant vault context for the declared goal, reconciles the session's Plane issue, and locks in the session metadata used by end-conversation. Loaded automatically via SessionStart hook; can also be invoked manually via the Skill tool (slash-command form /session-start, not /start) to re-orient mid-session.
 ---
 
 # session-start — front-of-session bookend
@@ -21,8 +21,9 @@ before substantive work begins:
 - [ ] Step 3: Write the session's tree slot
 - [ ] Step 4: Manager-decides on resume (read unread subtree events)
 - [ ] Step 5: Surface relevant vault context
+- [ ] Step 5a: Reconcile the Plane issue (read-mostly; one write)
 - [ ] Step 6: Establish one-sentence session goal (ask only if not already supplied)
-- [ ] Step 7: Remind user about /end and the CTX-WARN trigger
+- [ ] Step 7: Remind user how to close the session, and the CTX-WARN trigger
 
 ## Step 1: Detect launch context
 
@@ -172,6 +173,51 @@ Relevant vault context:
 
 If no hits, say "no prior vault context for this repo" — that's useful info too.
 
+## Step 5a: Reconcile the Plane issue
+
+Same question as Step 5 — *what is already known about this work?* — asked of
+Plane instead of the vault. **Plane is the status surface; the vault task
+folder is the substance.** This step is what keeps the first half true, because
+the bookends are the only code path that runs often enough to keep it true. A
+convention with no enforcement is a preference.
+
+It is numbered `5a` deliberately. Step 6 is INFRA-40's two-branch goal
+decision and Step 7 is the closing reminder; both are referenced from outside
+this file, so nothing after Step 5 is renumbered.
+
+Run:
+
+```bash
+sync=~/.claude/cc-plane-sync.sh
+[ -f "$sync" ] || sync=~/.claude/skills/../shell/cc-plane-sync.sh
+[ -f "$sync" ] && bash "$sync" start \
+  || echo "plane-sync: helper not installed — skipping Plane sync (run cc-doctor)"
+```
+
+The second line is a fallback, not a workaround: `~/.claude/skills` is a
+symlink to `canonical/skills`, so `skills/../shell/` resolves to
+`canonical/shell/` whether or not `configure.sh` has grown a `link` line for
+this helper yet.
+
+**What it does.** Resolves this session's issue reference — `--issue`, then
+`.cc-mode` `plane_issue=`, then `<task folder>/plane.md`, then the `slug` when
+it is already issue-shaped (`INFRA-41`). That last branch is the one that fires
+today: `cc-branch INFRA-41` makes the slug and the `task_id` the Plane issue ID
+already, which is the first branch of the `CLAUDE.md` **Task identity**
+contract. If the issue is in a `backlog` or `unstarted` group, it is PATCHed
+into the project's `started` state — a session is open on this work, right now,
+by definition. **Nothing else**: no creation, no priority change, no close.
+
+Echo the helper's output as-is. It prints the issue's current line, which is
+worth reading before you declare the goal in Step 6.
+
+**This step never blocks the session.** Plane sits across the UDM from this
+workstation and its IPS drops inter-VLAN HTTP sessions (INFRA-37). The helper
+warns and exits 0 on every network, auth, or lookup failure, and a session with
+no Plane issue at all is normal for short ad-hoc work — it says so and
+continues. Treat a non-zero exit as a usage error worth surfacing; anything
+else is already handled.
+
 ## Step 6: Establish the one-sentence session goal
 
 The goal must be **established**, not necessarily **asked for**. Decide
@@ -244,12 +290,27 @@ Reading the first user message costs nothing, needs no signature change and
 no new quoting rules, and works for every dispatch path — `cc-branch`,
 subagent dispatch, or a human who simply opens with what they want.
 
-## Step 7: Remind user about /end
+## Step 7: Remind user how to close the session
 
 End with this exact one-liner:
-> "Ready. When you wrap up, run `/end` to walk the closing ritual.
->  If you see `CTX-WARN` on the statusline, propose `/end` before continuing
->  substantive work — that means context is at 80% and compaction is near."
+> "Ready. When you wrap up, invoke the `end-conversation` skill via the Skill
+>  tool (as a slash command it is `/end-conversation`) to walk the closing
+>  ritual. If you see `CTX-WARN` on the statusline, propose closing before
+>  continuing substantive work — that means context is at 80% and compaction
+>  is near."
+
+**Do not write `/end`.** Claude Code auto-exposes each skill as
+`/<skill-name>`, so a slash command resolves if and only if it is spelled
+exactly like the skill directory. `end-conversation` and `session-start`
+resolve; the abbreviations `/end` and `/start` do not exist and return
+`Unknown command`. Verified empirically 2026-09-03 against Claude Code
+v2.1.236. The cause is the name mismatch, **not** the worktree — the same
+probe confirmed `/ring-maintenance` resolves normally inside a `cc-branch`
+worktree, so any account attributing this to worktrees is wrong.
+
+The Skill-tool form is the one to prefer in anything an autonomous session
+reads: it is true regardless of how commands are exposed, and it is immune to
+this whole class of drift.
 
 ## Special cases
 

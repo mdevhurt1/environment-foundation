@@ -23,13 +23,25 @@ exploration mode (be cautious; ask before destructive ops).
 ## Session bookends
 
 - **Session start:** Loaded automatically via the SessionStart hook. The
-  `session-start` skill verifies mode, surfaces relevant vault context, and
-  has you declare a one-sentence goal. **If you see no session-start
-  output, the bookends aren't installed — run `cc-doctor`.**
-- **Session end:** Run `/end` to invoke the `end-conversation` skill.
+  `session-start` skill verifies mode, surfaces relevant vault context,
+  reconciles this session's Plane issue, and has you declare a one-sentence
+  goal. **If you see no session-start output, the bookends aren't installed
+  — run `cc-doctor`.**
+- **Session end:** Invoke the `end-conversation` skill via the Skill tool.
   Required before significant context loss; recommended at any natural
   stopping point. The skill walks the closing ritual: memory delta,
-  spec/plan capture, transcript decision, vault import, worktree fold.
+  spec/plan capture, Plane issue update, transcript decision, vault import,
+  worktree fold.
+
+**Slash commands resolve by exact skill name.** Claude Code auto-exposes each
+skill as `/<skill-name>`, so the working forms are `/end-conversation` and
+`/session-start`. The abbreviations **`/end` and `/start` do not exist** and
+return `Unknown command` — they were documented here for months and never
+worked. Verified empirically 2026-09-03 against Claude Code v2.1.236; the same
+probe confirmed `/ring-maintenance` resolves normally, including inside a
+`cc-branch` worktree, so this is a name mismatch and **not** a worktree
+problem. Prefer the Skill tool in anything an autonomous session reads: it is
+true regardless of how commands are exposed.
 
 ## Vault
 
@@ -53,8 +65,9 @@ three-spaces.md`):
 - `EXPLORE` (yellow) — sandboxed, in worktree
 - `BUILD` (red) — full perms, no prompts
 - `CONTINUE` (cyan) — resumed
-- Context % shown at right; **at 80%, propose `/end`** before continuing
-  substantive work to avoid losing the session to compaction.
+- Context % shown at right; **at 80%, propose closing the session** (invoke
+  `end-conversation` via the Skill tool) before continuing substantive work,
+  to avoid losing the session to compaction.
 
 ## Auto-memory location override
 

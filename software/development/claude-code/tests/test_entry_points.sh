@@ -147,8 +147,25 @@ assert_eq "cc-explore: .cc-mode records the slug" "myslug" "$(mode_val "$WT" slu
 sid=$(mode_val "$WT" session_id)
 assert_eq "cc-explore: session_id is 22 chars" "22" "${#sid}"
 assert_eq "cc-explore: sandbox settings written into the worktree" \
-    '{"sandbox":{"enabled":true,"failIfUnavailable":true}}' \
+    '{"sandbox":{"enabled":true,"failIfUnavailable":true,"filesystem":{"allowWrite":["~/vault/20-surface/claude-memory","~/vault/20-surface/claude-transcripts","~/vault/20-surface/claude-specs","~/vault/20-surface/claude-plans","~/vault/20-surface/company/tree/sessions","~/vault/20-surface/company/_command-center/state/promotion-queue.md"]}}}' \
     "$(cat "$WT/.cc-sandbox-settings.json" 2>/dev/null)"
+
+# AI_ST-64: the fragment must carve out every dir the end-conversation
+# bookend writes into, or an EXPLORE-mode /end falls back to sandbox
+# bypasses. Assert each surface dir by name (and validity as JSON) so a
+# future edit that drops one fails with a message naming it.
+sandbox_json=$(cat "$WT/.cc-sandbox-settings.json" 2>/dev/null)
+python3 -c 'import json,sys; json.loads(sys.stdin.read())' <<<"$sandbox_json" \
+    && t_pass "cc-explore: sandbox settings fragment is valid JSON" \
+    || t_fail "cc-explore: sandbox settings fragment is valid JSON"
+for d in claude-memory claude-transcripts claude-specs claude-plans; do
+    assert_contains "cc-explore: sandbox allowWrite covers 20-surface/$d" \
+        "~/vault/20-surface/$d" "$sandbox_json"
+done
+assert_contains "cc-explore: sandbox allowWrite covers the promotion queue file only" \
+    "_command-center/state/promotion-queue.md" "$sandbox_json"
+assert_not_contains "cc-explore: sandbox allowWrite does not open the whole state/ dir" \
+    '_command-center/state"' "$sandbox_json"
 
 claude_seen=$(cat "$CLAUDE_LOG" 2>/dev/null)
 # The wrapper passes the worktree path as it built it — relative to the repo

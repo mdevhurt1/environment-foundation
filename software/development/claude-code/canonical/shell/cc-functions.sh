@@ -679,7 +679,14 @@ EOF
 # $1 = worktree directory path
 __cc_write_sandbox_settings() {
     local dir="$1"
-    printf '%s\n' '{"sandbox":{"enabled":true,"failIfUnavailable":true}}' \
+    # The allowWrite list is repeated here rather than inherited from the
+    # global settings.json because --settings replaces the sandbox object
+    # wholesale — a fragment without it would strip the vault carveouts in
+    # exactly the sessions that need them. Scope (AI_ST-64): the four
+    # claude-* surface dirs the end-conversation bookend writes into, the
+    # tree/sessions topology dir, and the promotion queue as a single file —
+    # not its parent state/ dir, which is EA operational state.
+    printf '%s\n' '{"sandbox":{"enabled":true,"failIfUnavailable":true,"filesystem":{"allowWrite":["~/vault/20-surface/claude-memory","~/vault/20-surface/claude-transcripts","~/vault/20-surface/claude-specs","~/vault/20-surface/claude-plans","~/vault/20-surface/company/tree/sessions","~/vault/20-surface/company/_command-center/state/promotion-queue.md"]}}}' \
         > "$dir/.cc-sandbox-settings.json"
 }
 

@@ -69,7 +69,12 @@
     },
     "filesystem": {
       "allowWrite": [
-        "~/vault/20-surface/company/tree/sessions"
+        "~/vault/20-surface/claude-memory",
+        "~/vault/20-surface/claude-transcripts",
+        "~/vault/20-surface/claude-specs",
+        "~/vault/20-surface/claude-plans",
+        "~/vault/20-surface/company/tree/sessions",
+        "~/vault/20-surface/company/_command-center/state/promotion-queue.md"
       ]
     }
   },

@@ -80,6 +80,7 @@ check_symlink "$CLAUDE_DIR/skills"                "$EXPECTED_CANONICAL/skills"
 check_symlink "$CLAUDE_DIR/cc-functions.sh"       "$EXPECTED_CANONICAL/shell/cc-functions.sh"
 check_symlink "$CLAUDE_DIR/model-policy.json"     "$EXPECTED_CANONICAL/model-policy.json"
 check_symlink "$CLAUDE_DIR/agents"                "$EXPECTED_CANONICAL/agents"
+check_symlink "$CLAUDE_DIR/cc-plane-sync.sh"      "$EXPECTED_CANONICAL/shell/cc-plane-sync.sh"
 
 # ---- 2. canonical/ contains no secrets, no /home/<user>/ paths ----
 heading "Canonical safety"
@@ -404,6 +405,40 @@ for repo in "$REPO_ROOT" "$HOME/environment-secrets"; do
         warn "$repo is not a git repo (or missing)"
     fi
 done
+
+# ---- 7b. Push lag: local main vs origin/main ----
+heading "Push lag"
+# On 2026-09-03 the workflow audit found 15 merged commits -- including the
+# entire test harness -- existing on one disk only, because the merge ritual
+# had no push step (INFRA-50). ~/.claude is symlinked into this checkout, so
+# the shipped tooling and its source of truth share that single point of
+# loss. The ritual now ends with a push (finishing-a-development-branch,
+# "Push the merged base"); this check is what makes a skipped push impossible
+# to miss: it stays yellow on every doctor run until the push happens.
+#
+# Judged against the LOCAL origin/main ref -- no fetch, doctor must work
+# offline. The count can therefore under-report when origin has moved since
+# the last fetch; it can never false-alarm. WARN, not FAIL: unpushed-right-
+# after-merge is the normal intermediate state this check exists to display,
+# and the push (after disclosure review on a public remote) is what clears it.
+if ! git -C "$REPO_ROOT" rev-parse --verify -q main >/dev/null 2>&1; then
+    warn "no local main branch — push-lag check unavailable"
+elif ! git -C "$REPO_ROOT" rev-parse --verify -q origin/main >/dev/null 2>&1; then
+    warn "no origin/main ref — push-lag check unavailable (add an origin remote and fetch once)"
+else
+    unpushed=$(git -C "$REPO_ROOT" rev-list --count origin/main..main 2>/dev/null)
+    if [ "${unpushed:-0}" -eq 0 ]; then
+        ok "main carries no commits missing from origin/main (as of the last fetch)"
+    else
+        oldest_epoch=$(git -C "$REPO_ROOT" rev-list origin/main..main --format=%ct --no-commit-header 2>/dev/null | tail -1)
+        now_epoch=$(date +%s)
+        age_days=$(( (now_epoch - ${oldest_epoch:-$now_epoch}) / 86400 ))
+        warn "$unpushed commit(s) on main not pushed to origin (oldest is ${age_days} day(s) old)"
+        printf '       Merged work exists on this disk only. The merge ritual ends with a\n'
+        printf '       push: public remotes get a disclosure review first, internal remotes\n'
+        printf '       push at merge time (finishing-a-development-branch, INFRA-50).\n'
+    fi
+fi
 
 # ---- 8. Shell-snapshot safety of cc-* helper names ----
 heading "Shell snapshot safety"

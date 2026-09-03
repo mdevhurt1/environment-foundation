@@ -110,6 +110,27 @@ delete the branch:
 git branch -d <feature-branch>
 ```
 
+#### Push the merged base (the merge is not finished until this happens)
+
+A local merge exists on one disk. On 2026-09-03 fifteen merged commits —
+including this repo's entire test harness — sat local-only for hours
+because this step did not exist (INFRA-50), and `~/.claude` is symlinked
+into the same checkout, so the shipped tooling and its source shared a
+single point of loss. End every merge by getting the base branch off the
+machine:
+
+- **Internal remote** (Gitea or another LAN forge): push at merge time,
+  no ceremony: `git push origin <base-branch>`.
+- **Public remote** (github.com or any internet-reachable forge): run the
+  disclosure review first — `cc-doctor`'s canonical-safety and
+  autoMode-disclosure sections must be green on the merged tree — then
+  push. The three reviewed pushes of 2026-09-03 are the precedent.
+- **Autonomous / branched session**: do not push. Pushing is the parent
+  (EA) session's step, precisely so the disclosure review happens with a
+  human reachable. State "merged to local main, unpushed" in the
+  completion report; `cc-doctor`'s **Push lag** check stays WARN until
+  the push lands, so a skipped push cannot go silently stale.
+
 ### Option 2: Push and Create PR
 
 ```bash
@@ -223,3 +244,4 @@ place. If your platform provides a workspace-exit tool, use it.
 | "The merged-result failure is probably flaky" | A failing merged result stops everything. Branch and worktree stay put while you investigate. |
 | "The base branch is obviously main" | Confirm the fork point or ask. Merging into the wrong base is expensive to undo. |
 | "The push was rejected — force-push will fix it" | A rejected push means the remote moved. Investigate; force-push only on your human partner's explicit request. |
+| "The merge landed — pushing can wait" | Merged-but-unpushed work exists on one disk. Push now (after the disclosure review if the remote is public), or hand the push to the session that owns it and say so out loud. |

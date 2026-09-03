@@ -189,17 +189,17 @@ pane_scan() {  # pane_scan <window_name> -> "status|signals"
         # finished child is the normal, healthy state. Reporting that as
         # "tmux unavailable" sends the reader off debugging a working tmux;
         # this session lost time to exactly that confusion.
-        if printf '%s' "$out" | grep -qi "can't find window\|can't find session\|no such window"; then
+        if grep -qi "can't find window\|can't find session\|no such window" <<<"$out"; then
             printf '%s' "no-window|"
         else
-            printf 'tmux-unreachable(%s)|' "$(printf '%s' "$out" | head -1 | cut -c1-60)"
+            printf 'tmux-unreachable(%s)|' "$(head -1 <<<"$out" | cut -c1-60)"
         fi
         return
     fi
     out=$(printf '%s\n' "$out" | tail -n "$PANE_LINES")
     for sig in "${PANE_SIGS[@]}"; do
         name="${sig%%|*}"; re="${sig#*|}"
-        printf '%s\n' "$out" | grep -qE "$re" && hits="${hits}${hits:+,}${name}"
+        grep -qE "$re" <<<"$out" && hits="${hits}${hits:+,}${name}"
     done
     # A numbered menu needs >= 2 options to be a menu rather than prose.
     n=$(printf '%s\n' "$out" | grep -cE '^[[:space:]]*(❯[[:space:]]*)?[0-9]+\.[[:space:]]+[A-Za-z]' 2>/dev/null)
@@ -226,7 +226,7 @@ fetch_repo() {  # fetch_repo <worktree> -> sets FETCH_NOTE
     fi
     out=$(timeout 90 git -C "$wt" fetch --all --prune --tags 2>&1); rc=$?
     if [ $rc -eq 0 ]; then FETCHED[$common]="fetched"
-    else FETCHED[$common]="UNVERIFIED(fetch-failed rc=$rc: $(printf '%s' "$out" | head -1 | cut -c1-50))"
+    else FETCHED[$common]="UNVERIFIED(fetch-failed rc=$rc: $(head -1 <<<"$out" | cut -c1-50))"
     fi
     FETCH_NOTE="${FETCHED[$common]}"
 }
@@ -332,7 +332,8 @@ else
         # -- filesystem liveness. This, not the pane, is the progress oracle.
         tf="$TASKS_DIR/${task_id}"
         if [ -n "$task_id" ] && [ -d "$tf" ]; then
-            newest=$(find "$tf" -type f -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1)
+            newest=$(find "$tf" -type f -printf '%T@ %p\n' 2>/dev/null \
+                     | awk '$1 + 0 >= m { m = $1 + 0; line = $0 } END { if (line != "") print line }')
             nt=${newest%% *}; np=${newest#* }
             echo "task folder : $(basename "${np:-none}") $(age_of "${nt%%.*}")"
             tf_epoch="${nt%%.*}"

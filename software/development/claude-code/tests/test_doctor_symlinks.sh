@@ -71,6 +71,7 @@ printf '# stub\n' > "$MAIN/$CANON_REL/CLAUDE.md"
 printf '{}\n'     > "$MAIN/$CANON_REL/settings.json"
 printf '# stub\n' > "$MAIN/$CANON_REL/statusline-command.sh"
 printf '# stub\n' > "$MAIN/$CANON_REL/shell/cc-functions.sh"
+printf '# stub\n' > "$MAIN/$CANON_REL/shell/cc-plane-sync.sh"
 printf '{}\n'     > "$MAIN/$CANON_REL/model-policy.json"
 printf '# stub\n' > "$MAIN/$CANON_REL/skills/.keep"
 printf '# stub\n' > "$MAIN/$CANON_REL/agents/.keep"
@@ -93,6 +94,7 @@ deploy_links() {
     ln -sfn "$target/shell/cc-functions.sh" "$FAKEHOME/.claude/cc-functions.sh"
     ln -sfn "$target/model-policy.json"     "$FAKEHOME/.claude/model-policy.json"
     ln -sfn "$target/agents"                "$FAKEHOME/.claude/agents"
+    ln -sfn "$target/shell/cc-plane-sync.sh" "$FAKEHOME/.claude/cc-plane-sync.sh"
 }
 deploy_links "$MAIN"
 
@@ -112,7 +114,7 @@ main_out=$(doctor_symlinks "$MAIN")
 branch_out=$(doctor_symlinks "$BRANCH")
 
 n_ok=$(printf '%s\n' "$main_out" | grep -c '^\[OK\]')
-assert_eq "main run: all 7 deployed links OK" "7" "$n_ok"
+assert_eq "main run: all 8 deployed links OK" "8" "$n_ok"
 assert_not_contains "main run: no FAIL in the symlink section" "[FAIL]" "$main_out"
 
 assert_not_contains "branch run: no FAIL in the symlink section" "[FAIL]" "$branch_out"

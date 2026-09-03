@@ -1,6 +1,6 @@
 ---
 name: end-conversation
-description: Bookend skill that runs at session close. Captures memory deltas, asks whether to keep the transcript, mirrors approved artifacts into the Obsidian vault's surface ring, optionally folds the worktree, and prompts for promotion candidates. Invoked manually via /end. Should also be invoked when the statusline shows CTX-WARN.
+description: Bookend skill that runs at session close. Captures memory deltas, asks whether to keep the transcript, mirrors approved artifacts into the Obsidian vault's surface ring, optionally folds the worktree, prompts for promotion candidates, and records the closing state on the session's Plane issue. Invoke via the Skill tool (slash-command form /end-conversation, not /end). Should also be invoked when the statusline shows CTX-WARN.
 ---
 
 # end-conversation — close-of-session bookend
@@ -11,21 +11,24 @@ session is forfeit.
 
 ## Trigger conditions
 
-- User runs `/end`.
+- The user asks to close the session — by invoking this skill via the Skill
+  tool, or with the slash command `/end-conversation`.
 - You observe `CTX-WARN` in the statusline (set by `statusline-command.sh`
   when context usage crosses 80%). When you see this marker, **propose
-  `/end` to the user** with a one-line summary of what's at stake. They
+  closing to the user** with a one-line summary of what's at stake. They
   may decline; that's fine. Do not auto-end.
 
 ## Checklist (you MUST complete each item, in order)
 
 - [ ] Step 1: Memory delta review
 - [ ] Step 2: Specs/plans capture
+- [ ] Step 2a: Update the Plane issue (one question, then write)
 - [ ] Step 3: Transcript decision
 - [ ] Step 4: Memory sync to vault
 - [ ] Step 5: Promotion candidates
 - [ ] Step 6: Worktree fold (exploration mode only)
-- [ ] Step 7: Final report
+- [ ] Step 7: Update the session's tree slot
+- [ ] Step 8: Final report
 
 ## Step 1: Memory delta review
 
@@ -57,6 +60,67 @@ superpowers/plans/` or `~/.claude/plans/`, list them. For each:
 If vault is missing, queue under `~/.claude/queue/specs/` and `~/.claude/
 queue/plans/` with a note for the next successful end-conversation run
 to flush the queue.
+
+## Step 2a: Update the Plane issue
+
+`session-start` Step 5a said the work *started*. This step is the half that
+says how it *ended*, and it is the one that matters: `AI_ST-44`, `INFRA-3` and
+`INFRA-30` all describe work that finished with nobody to tell, and sat for
+months. A closing bookend that asks "is this done?" converts a 90-day silence
+into a 10-second answer.
+
+It runs here — after Step 2 knows what the session produced, before Step 3
+starts disposing of artifacts — so the audit line can name a real commit or
+path. It is numbered `2a` so the steps below it keep their numbers.
+
+First, see what the board currently thinks:
+
+```bash
+sync=~/.claude/cc-plane-sync.sh
+[ -f "$sync" ] || sync=~/.claude/skills/../shell/cc-plane-sync.sh
+[ -f "$sync" ] && bash "$sync" resolve \
+  || echo "plane-sync: helper not installed — skipping Plane sync (run cc-doctor)"
+```
+
+If it reports no Plane issue for this session, skip to Step 3 — short ad-hoc
+work legitimately has none.
+
+Otherwise **ask exactly one question**, quoting the line the helper printed:
+
+> `INFRA-41` — *Mechanize the Plane/vault division of labour in the session bookends*
+> Currently: **In Progress**, `high`.
+> Is this **done**, **still in progress**, or **blocked**?
+
+Then write the answer, with a one-line audit note naming the commit SHA or
+artifact path this session produced:
+
+```bash
+bash "$sync" finish <done|blocked|progress> --note "<what happened> (<sha or path>)"
+```
+
+`done` moves the issue to the project's completed state; `blocked` moves it to
+`Blocked`; `progress` leaves the state alone. All three post the comment —
+that comment is the audit trail that makes a stale issue diagnosable later,
+which the current board's issues almost entirely lack. The helper re-fetches
+after every write and reports what the server actually holds, because a
+rate-limit body (`error_code` 5900) is a 2-key dict that reads as a plausible
+result if you trust the write response.
+
+**One question, and only one.** Every step here runs many times a day across
+the fleet. If this bookend grows past a single question, sessions will start
+skipping the bookend entirely — and the tree slot, the memory sweep and the
+vault import all ride on the same skill. That costs far more than a stale
+board.
+
+**Never block on this.** The helper warns and exits 0 on any network or auth
+failure (the UDM IPS drops inter-VLAN sessions; INFRA-37). A session that
+cannot reach Plane still completes its close.
+
+**Autonomous sessions.** A briefed branch with nobody watching its pane cannot
+be asked. Answer from what the session actually did — the same standard Step 6
+of `session-start` applies — and prefer `progress` over `done` unless the work
+is genuinely finished and verified. Never report `done` from a plan's or a
+brief's claim that something landed; check the artifact the issue is about.
 
 ## Step 3: Transcript decision
 
@@ -152,7 +216,7 @@ missing, has no `session_id`, or the slot file was never written.
 Treat any non-zero exit as a real failure to surface to the user;
 otherwise echo the helper's output as-is.
 
-If the session exits without `/end` (e.g., the terminal is closed),
+If the session exits without running this skill (e.g., the terminal is closed),
 the slot will remain in `status: running` and no parent event will
 fire. This is acceptable for the founding state; future phases may
 add a wrapper-side stale-slot reaper.
@@ -178,6 +242,8 @@ that artifacts are queued.
 **No new memory, no specs/plans, transcript declined**: still run Steps
 5-8. The promotion-candidates question and the final report still apply.
 
-**User runs /end multiple times in one session**: subsequent runs are
+**This skill is invoked more than once in a session**: subsequent runs are
 no-ops; surface a summary of what was already captured and skip Steps
-1-6. Always do Steps 7-8.
+1-6, including Step 2a — the Plane issue has already been answered, and
+asking twice is exactly the friction that makes sessions skip the bookend.
+Always do Steps 7-8.

@@ -36,6 +36,32 @@ heading() { printf '\n\033[01;34m== %s ==\033[00m\n' "$*"; }
 
 # ---- 1. Symlinks point to canonical ----
 heading "Symlinks"
+# configure.sh deploys the ~/.claude symlinks ONCE, from the main worktree, and
+# every session on the machine shares that one live config. Deriving the
+# expected target from this script's own checkout therefore reported one false
+# FAIL per deployed symlink whenever doctor ran from a cc-branch/cc-explore
+# worktree — 7 spurious FAILs on every branched session, training the repo's
+# only self-check into ignorability (INFRA-47). Judge against the CANONICAL
+# checkout instead: the main worktree, resolved from git's common dir, which is
+# the same answer from every worktree of this repo.
+#
+# Deliberately NOT derived from readlink on the links under test: a check that
+# takes its expected values from the artifact it is checking would certify any
+# target as correct — including a link repointed at a temporary worktree that
+# will be folded next week. Same principle as 2c's constant work-list.
+EXPECTED_CANONICAL="$CANONICAL"
+git_common=$(git -C "$REPO_ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+if [ -n "$git_common" ] \
+   && [ -d "$(dirname "$git_common")/software/development/claude-code/canonical" ]; then
+    EXPECTED_CANONICAL="$(dirname "$git_common")/software/development/claude-code/canonical"
+    if [ "$EXPECTED_CANONICAL" != "$CANONICAL" ]; then
+        printf '       (doctor is running from a non-canonical checkout: %s\n' "$REPO_ROOT"
+        printf '        expected targets below resolve to the main worktree)\n'
+    fi
+else
+    warn "cannot resolve the main worktree via git — judging symlinks against this checkout"
+fi
+
 check_symlink() {
     local link="$1" expect="$2"
     if [ ! -e "$link" ]; then fail "$link missing"; return; fi
@@ -47,13 +73,13 @@ check_symlink() {
         fail "$link -> $actual (expected $expect)"
     fi
 }
-check_symlink "$CLAUDE_DIR/CLAUDE.md"             "$CANONICAL/CLAUDE.md"
-check_symlink "$CLAUDE_DIR/settings.json"         "$CANONICAL/settings.json"
-check_symlink "$CLAUDE_DIR/statusline-command.sh" "$CANONICAL/statusline-command.sh"
-check_symlink "$CLAUDE_DIR/skills"                "$CANONICAL/skills"
-check_symlink "$CLAUDE_DIR/cc-functions.sh"       "$CANONICAL/shell/cc-functions.sh"
-check_symlink "$CLAUDE_DIR/model-policy.json"     "$CANONICAL/model-policy.json"
-check_symlink "$CLAUDE_DIR/agents"                "$CANONICAL/agents"
+check_symlink "$CLAUDE_DIR/CLAUDE.md"             "$EXPECTED_CANONICAL/CLAUDE.md"
+check_symlink "$CLAUDE_DIR/settings.json"         "$EXPECTED_CANONICAL/settings.json"
+check_symlink "$CLAUDE_DIR/statusline-command.sh" "$EXPECTED_CANONICAL/statusline-command.sh"
+check_symlink "$CLAUDE_DIR/skills"                "$EXPECTED_CANONICAL/skills"
+check_symlink "$CLAUDE_DIR/cc-functions.sh"       "$EXPECTED_CANONICAL/shell/cc-functions.sh"
+check_symlink "$CLAUDE_DIR/model-policy.json"     "$EXPECTED_CANONICAL/model-policy.json"
+check_symlink "$CLAUDE_DIR/agents"                "$EXPECTED_CANONICAL/agents"
 
 # ---- 2. canonical/ contains no secrets, no /home/<user>/ paths ----
 heading "Canonical safety"

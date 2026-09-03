@@ -82,6 +82,26 @@ link "$CANONICAL/shell/cc-tree-slot-update.sh" "$CLAUDE_DIR/cc-tree-slot-update.
 # Ring-maintenance scanner, invoked from the ring-maintenance skill (Phase 1).
 link "$CANONICAL/shell/cc-ring-scan.sh" "$CLAUDE_DIR/cc-ring-scan.sh"
 
+# Agent roster. Same reasoning as skills: the whole directory is linked, so an
+# agent added to canonical/agents/ is live on every configured machine without a
+# second deploy step. Until 2026-09-03 this directory was the ONE canonical
+# asset with no link at all -- ~/.claude/agents/ held a single local file that a
+# fresh machine lost silently, because nothing referenced it from here and
+# nothing checked for it. scripts/doctor.sh check 2d is the check that stops
+# that recurring.
+if [ -d "$CLAUDE_DIR/agents" ] && [ ! -L "$CLAUDE_DIR/agents" ]; then
+    existing=$(find "$CLAUDE_DIR/agents" -mindepth 1 -maxdepth 1 -type f -name '*.md' 2>/dev/null | wc -l)
+    if [ "$existing" -gt 0 ]; then
+        log_warn "$CLAUDE_DIR/agents contains $existing agent definition(s); these will be moved to backup"
+        log_warn "review them and copy any you want to canonical/agents/"
+        backup_if_real "$CLAUDE_DIR/agents"
+    else
+        rmdir "$CLAUDE_DIR/agents"
+    fi
+fi
+ln -sfn "$CANONICAL/agents" "$CLAUDE_DIR/agents"
+log_ok "linked $CLAUDE_DIR/agents -> $CANONICAL/agents"
+
 # SessionStart injector for the vendored `using-superpowers` skill. Replaces the
 # superpowers plugin's own hook, which we lost when the plugin was disabled over
 # the brainstorming/writing-plans name collision. Registered in settings.json.

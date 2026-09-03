@@ -53,6 +53,7 @@ check_symlink "$CLAUDE_DIR/statusline-command.sh" "$CANONICAL/statusline-command
 check_symlink "$CLAUDE_DIR/skills"                "$CANONICAL/skills"
 check_symlink "$CLAUDE_DIR/cc-functions.sh"       "$CANONICAL/shell/cc-functions.sh"
 check_symlink "$CLAUDE_DIR/model-policy.json"     "$CANONICAL/model-policy.json"
+check_symlink "$CLAUDE_DIR/agents"                "$CANONICAL/agents"
 
 # ---- 2. canonical/ contains no secrets, no /home/<user>/ paths ----
 heading "Canonical safety"
@@ -220,6 +221,87 @@ else
     else
         ok "autoMode.environment carries no disclosure-shaped content ($am_count entries scanned)"
     fi
+fi
+
+# ---- 2d. Agent roster is version-controlled ----
+heading "Agent roster"
+#
+# Until 2026-09-03 ~/.claude/agents/ was a LOCAL ORPHAN: one file,
+# critical-code-reviewer.md, dated 2026-04-24, not a symlink, not in the repo,
+# and not mentioned anywhere in configure.sh. Every other canonical asset --
+# skills, settings, statusline, shell helpers, model-policy -- is symlinked back
+# here. A fresh machine ran configure.sh, got a complete-looking install, and
+# silently had no agents at all.
+#
+# The symlink itself is asserted in section 1 alongside the others. This section
+# asserts the two things that symlink cannot: that the repo side has something
+# to serve, and that ~/.claude/agents holds nothing the repo does not know
+# about. The second is the one that stops the gap RECURRING -- an agent authored
+# through the Claude Code agents view lands in ~/.claude/agents/ as a real file,
+# and without this check it becomes the next orphan with nobody the wiser.
+agents_dir="$CANONICAL/agents"
+if [ ! -d "$agents_dir" ]; then
+    fail "canonical/agents/ missing - the agent roster is not version-controlled"
+    printf '       ~/.claude/agents/ is then a local orphan: a fresh machine loses it\n'
+    printf '       silently. Create canonical/agents/ and re-run configure.sh.\n'
+else
+    mapfile -t agent_files < <(find "$agents_dir" -maxdepth 1 -type f -name '*.md' | sort)
+    if [ "${#agent_files[@]}" -eq 0 ]; then
+        warn "canonical/agents/ is empty - no agent definitions are version-controlled"
+    else
+        ok "canonical/agents/ carries ${#agent_files[@]} agent definition(s)"
+    fi
+
+    # Claude Code keys an agent on the `name:` in its frontmatter; a human keys
+    # it on the filename. When those disagree the agent still loads, under a
+    # name nobody grepped for -- a silent failure, not a loud one.
+    name_drift=""
+    for af in ${agent_files[@]+"${agent_files[@]}"}; do
+        stem=$(basename "$af" .md)
+        declared=$(head -20 "$af" | grep -m1 '^name:' | cut -d: -f2- \
+                   | tr -d '"'"'"' \t\r')
+        if [ -z "$declared" ]; then
+            name_drift="$name_drift  $stem.md: no 'name:' in frontmatter"$'\n'
+        elif [ "$declared" != "$stem" ]; then
+            name_drift="$name_drift  $stem.md: declares name '$declared'"$'\n'
+        fi
+    done
+    if [ -n "$name_drift" ]; then
+        fail "agent frontmatter 'name:' does not match the filename"
+        printf '%s' "$name_drift" | sed 's/^/     /'
+        printf '       Claude Code loads the agent under the DECLARED name, so a mismatch\n'
+        printf '       makes the agent findable by a name nobody searches for.\n'
+    else
+        ok "every agent definition declares a 'name:' matching its filename"
+    fi
+fi
+
+# Orphan sweep. Skipped when ~/.claude/agents is the symlink configure.sh
+# deploys, because then it IS canonical/agents and comparing it to itself proves
+# nothing. Runs when it is a real directory -- which is exactly the state the
+# 2026-04-24 orphan was in.
+if [ -L "$CLAUDE_DIR/agents" ]; then
+    ok "~/.claude/agents is the deployed symlink (no local-only agents possible)"
+elif [ -d "$CLAUDE_DIR/agents" ]; then
+    orphans=""
+    while IFS= read -r local_af; do
+        [ -z "$local_af" ] && continue
+        [ -f "$agents_dir/$(basename "$local_af")" ] || orphans="$orphans  $local_af"$'\n'
+    done < <(find "$CLAUDE_DIR/agents" -maxdepth 1 -type f -name '*.md' | sort)
+    if [ -n "$orphans" ]; then
+        fail "agent definition(s) in ~/.claude/agents/ with no copy in canonical/agents/"
+        printf '%s' "$orphans" | sed 's/^/     /'
+        printf '       These are local-only and a fresh machine loses them silently.\n'
+        printf '       fix: git mv them into canonical/agents/, commit, then re-run\n'
+        printf '            scripts/configure.sh to replace the directory with the symlink.\n'
+    else
+        warn "~/.claude/agents is a real directory, not the deployed symlink"
+        printf '       Its contents are all present in canonical/agents/, so nothing is\n'
+        printf '       orphaned - but agents added through the Claude Code agents view will\n'
+        printf '       land here and NOT in the repo. fix: run scripts/configure.sh.\n'
+    fi
+else
+    warn "~/.claude/agents does not exist - run scripts/configure.sh to deploy it"
 fi
 
 # ---- 3. ~/.bashrc sources cc-functions.sh ----

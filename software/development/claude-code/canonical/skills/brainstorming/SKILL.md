@@ -106,29 +106,50 @@ events directory, then print a one-line confirmation and exit. Do not
 invoke `writing-plans`. Do not write code. The CEO decides what comes
 next.
 
+Emit it with the stamping helper — never hand-author the file (AI_ST-65).
+The helper stamps `emitted_at` from the clock and names the event
+`max(epoch, highest-existing-number + 1)`, which is what keeps the
+parent's `.read-up-to` cursor monotonic. The sequential `NNNN-` name and
+hand-typed `ts:` this step used to write did neither: a `NNNN-` event
+landing in a directory that already holds an epoch-named one compares
+below the marker and is unread forever.
+
 ```bash
-events_dir="$HOME/vault/20-surface/company/tree/sessions/${session_id}.events"
-mkdir -p "$events_dir"
-next=$(printf "%04d" $(( $(find "$events_dir" -maxdepth 1 -name '[0-9]*-*.md' 2>/dev/null | wc -l) + 1 )))
-cat > "$events_dir/${next}-spec-written.md" <<EOF
----
-event_id: $next
-verb: spec-written
-severity: info
-ts: $(date -Iseconds)
-spec_path: $task_dir/spec.md
----
-
-Brainstorming spec written and approved.
-
-<one-line summary — the spec's title>
+emit=~/.claude/skills/../shell/cc-event-emit.sh
+[ -f "$emit" ] || { echo "cc-event-emit.sh not found — run cc-doctor; do NOT hand-write the event"; exit 1; }
+# --to-session and --session-id are the SAME id here: the event is
+# self-addressed (it lands in this session's own events dir) and this
+# session is its emitter. Pass --session-id explicitly rather than letting
+# the helper fall back to $CC_SESSION_ID — Step 1 already read the
+# authoritative value out of .cc-mode, and an ambient variable can belong
+# to a different session than the spec does.
+bash "$emit" \
+  --to-session "$session_id" --session-id "$session_id" \
+  --verb spec-written --severity info \
+  --title "spec approved: <the spec's title>" \
+  --body "$(cat <<EOF
+Spec written and approved: $task_dir/spec.md
+<one line — what the spec decides>
 EOF
+)"
+rc=$?
+# Do NOT let the confirmation echo mask a failed emit: the spec would be on
+# disk while the parent never learns it exists, which reads as "still
+# brainstorming" from outside.
+if [ "$rc" -ne 0 ]; then
+  echo "spec-written event NOT emitted (cc-event-emit.sh exit $rc) — the spec is written but the tree will not show it"
+  exit "$rc"
+fi
 echo "spec: $task_dir/spec.md"
-echo "event: $events_dir/${next}-spec-written.md"
 ```
 
-Replace `<one-line summary — the spec's title>` with the actual title
-before running the heredoc.
+Replace both `<...>` placeholders with the real title and decision line
+before running this. The helper prints the path of the event it wrote.
+
+If it exits 4 (`events dir does not exist`), the session's tree slot was
+never written — the `session-start` bookend did not run. Say so and run
+`bash ~/.claude/cc-tree-slot-write.sh`; do not `mkdir` the events
+directory, because a missing one means the address is wrong.
 
 ## Spec template
 

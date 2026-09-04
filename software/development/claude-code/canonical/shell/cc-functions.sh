@@ -677,8 +677,10 @@ EOF
 
 # Write sandbox settings into the worktree so --settings can inject them.
 # $1 = worktree directory path
+# $2 = task id for the per-session task-folder carveout (optional)
 __cc_write_sandbox_settings() {
-    local dir="$1"
+    local dir="$1" task_id="${2:-}"
+
     # The allowWrite list is repeated here rather than inherited from the
     # global settings.json because --settings replaces the sandbox object
     # wholesale — a fragment without it would strip the vault carveouts in
@@ -686,7 +688,42 @@ __cc_write_sandbox_settings() {
     # claude-* surface dirs the end-conversation bookend writes into, the
     # tree/sessions topology dir, and the promotion queue as a single file —
     # not its parent state/ dir, which is EA operational state.
-    printf '%s\n' '{"sandbox":{"enabled":true,"failIfUnavailable":true,"filesystem":{"allowWrite":["~/vault/20-surface/claude-memory","~/vault/20-surface/claude-transcripts","~/vault/20-surface/claude-specs","~/vault/20-surface/claude-plans","~/vault/20-surface/company/tree/sessions","~/vault/20-surface/company/_command-center/state/promotion-queue.md"]}}}' \
+    local base='"~/vault/20-surface/claude-memory","~/vault/20-surface/claude-transcripts","~/vault/20-surface/claude-specs","~/vault/20-surface/claude-plans","~/vault/20-surface/company/tree/sessions","~/vault/20-surface/company/_command-center/state/promotion-queue.md"'
+
+    # INFRA-54: plus THIS session's own task folder, and only its own. The
+    # entry is built from the session's task id, so the fragment a session
+    # launches under can never open a sibling's folder or the tasks/ parent —
+    # that scoping is the whole point, and a blanket "company/tasks" entry
+    # would hand every EXPLORE session write access to every other task's
+    # spec, plan, and report.
+    #
+    # Task identity follows CLAUDE.md: the Plane issue id when the task has
+    # one, else the .cc-mode slug. At launch the slug is the identity that
+    # exists (a Plane-backed exploration is launched with the issue id as its
+    # slug — `cc-explore INFRA-54`), and cc-tree-slot-write.sh defaults the
+    # slot's task_id to the same value, so the two agree by construction.
+    local task_entry=""
+    if [ -n "$task_id" ]; then
+        if [[ "$task_id" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+            task_entry=",\"~/vault/20-surface/company/tasks/$task_id\""
+            # An allowWrite entry for a directory that does not exist is
+            # inert: creating it would be a write to tasks/, which stays
+            # denied, so the session would be handed a carveout it cannot
+            # use. Create it HERE, in the launching shell, which is not
+            # sandboxed. Never fatal — a missing vault is not a launch error.
+            mkdir -p "$HOME/vault/20-surface/company/tasks/$task_id" 2>/dev/null \
+                || __cc_log "WARNING: could not create $HOME/vault/20-surface/company/tasks/$task_id — the task-folder carveout will be inert"
+        else
+            # cc-explore validates its slug with this same rule, but
+            # cc-continue reads the value back out of a file a human can
+            # edit, and it is interpolated into both JSON and a mkdir path.
+            # Drop the entry rather than emit a broken fragment.
+            __cc_log "WARNING: task id '$task_id' is not [a-zA-Z0-9_-]+ — omitting the per-session task-folder carveout"
+        fi
+    fi
+
+    printf '{"sandbox":{"enabled":true,"failIfUnavailable":true,"filesystem":{"allowWrite":[%s%s]}}}\n' \
+        "$base" "$task_entry" \
         > "$dir/.cc-sandbox-settings.json"
 }
 
@@ -777,7 +814,7 @@ cc-explore() {
 
     __cc_write_mode_file "$worktree" exploration "$slug" "$repo_root" "$session_id" "${CC_PARENT_ID:-}" \
         "$__cc_model_value" "$__cc_model_source" "$__cc_perm_value" "$__cc_perm_source"
-    __cc_write_sandbox_settings "$worktree"
+    __cc_write_sandbox_settings "$worktree" "$slug"
 
     # The worktree is brand new, so claude has never been told to trust it. Do
     # that now: without a permission flag suppressing nothing, the launch would
@@ -883,7 +920,7 @@ cc-continue() {
     # Parse .cc-mode into local vars — do NOT export; exporting leaks into the
     # caller's interactive shell and poisons the next claude invocation.
     local mode="" slug="" started_at="" parent_repo="" session_id="" model="" model_source=""
-    local perm_mode="" perm_mode_source=""
+    local perm_mode="" perm_mode_source="" plane_issue=""
     # Split on the FIRST '=' only, then decode per the .cc-mode quoting
     # contract. The decode is what lets a resume recover a parent_repo that
     # contains a space -- and, for anything hostile, what keeps the value TEXT
@@ -899,6 +936,12 @@ cc-continue() {
             model_source) model_source=$(__cc_mode_unquote "$val") ;;
             perm_mode)        perm_mode=$(__cc_mode_unquote "$val") ;;
             perm_mode_source) perm_mode_source=$(__cc_mode_unquote "$val") ;;
+            # Not written by __cc_write_mode_file — an optional field the
+            # operator adds once a task acquires a Plane issue. Read here so
+            # the task-folder carveout follows CLAUDE.md's identity rule (the
+            # issue id when there is one, the slug otherwise), which is the
+            # same rule the brainstorming skill and cc-plane-sync.sh apply.
+            plane_issue)  plane_issue=$(__cc_mode_unquote "$val") ;;
         esac
     done <<< "$mode_data"
 
@@ -961,17 +1004,28 @@ cc-continue() {
         __cc_perm_prepare "$__cc_perm_role" || return 1
     fi
 
+    local resume_task_id="${plane_issue:-$slug}"
+
     case "${mode:-}" in
         exploration)
             __cc_log "CONTINUE (was EXPLORE: slug=${slug:-?}, started=${started_at:-?})"
             # Re-locate the sandbox settings file inside the worktree.
             local sandbox_settings
             if sandbox_settings=$(__cc_find_sandbox_settings); then
+                # Regenerate in place rather than reuse as found. The fragment
+                # is derived state (the canonical list plus this session's
+                # task id), so a resume of a worktree created before a
+                # carveout was added would otherwise run under the old,
+                # narrower policy forever — INFRA-54's whole point is that the
+                # carveout reaches live sessions. Rewriting the file WHERE IT
+                # WAS FOUND keeps the upward walk's answer stable; writing to
+                # $(pwd) instead would strand a second fragment in a subdir.
+                __cc_write_sandbox_settings "$(dirname "$sandbox_settings")" "$resume_task_id"
                 __cc_log "sandbox settings: $sandbox_settings"
                 CC_SESSION_ID="$session_id" claude "${__cc_model_args[@]}" "${__cc_perm_args[@]}" --continue --settings "$sandbox_settings"
             else
                 # Settings file missing (e.g. deleted manually); recreate in cwd.
-                __cc_write_sandbox_settings "$(pwd)"
+                __cc_write_sandbox_settings "$(pwd)" "$resume_task_id"
                 __cc_log "sandbox settings recreated at $(pwd)/.cc-sandbox-settings.json"
                 CC_SESSION_ID="$session_id" claude "${__cc_model_args[@]}" "${__cc_perm_args[@]}" --continue --settings "$(pwd)/.cc-sandbox-settings.json"
             fi

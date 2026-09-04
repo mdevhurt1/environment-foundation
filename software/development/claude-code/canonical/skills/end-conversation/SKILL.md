@@ -26,10 +26,14 @@ what's at stake; the user may decline, never auto-end.
 - [ ] Step 7: Update the session's tree slot
 - [ ] Step 8: Final report
 
-Sandbox note (AI_ST-64): every vault path steps 1–5 write —
-`~/vault/20-surface/claude-{memory,transcripts,specs,plans}/` and the
-promotion-queue file — is inside the sandbox `allowWrite` carveout. Run
-the writes as ordinary Bash; never reach for a sandbox bypass.
+Sandbox note (AI_ST-64, extended by INFRA-54): every vault path steps 1–5
+write — `~/vault/20-surface/claude-{memory,transcripts,specs,plans}/`, the
+promotion-queue file, and **this session's own**
+`~/vault/20-surface/company/tasks/<task_id>/` — is inside the sandbox
+`allowWrite` carveout. Run the writes as ordinary Bash; never reach for a
+sandbox bypass. The task-folder entry is per session: a sibling's task
+folder and the `tasks/` parent itself stay read-only, so a write there
+failing is the carveout working, not a bug to route around.
 
 ## Step 1: Memory delta review
 

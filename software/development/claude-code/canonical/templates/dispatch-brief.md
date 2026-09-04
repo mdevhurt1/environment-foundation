@@ -62,14 +62,22 @@ discrepancy in your report.
   (2xx/3xx ⇒ reachable; 000/timeout after earlier successes usually means
   an IPS session drop, not an outage — retry before diagnosing.)
 - **Vault write from Bash** — `touch ~/vault/20-surface/company/tasks/{{task_id}}/.probe-write && rm ~/vault/20-surface/company/tasks/{{task_id}}/.probe-write && echo bash-write-ok`
-  (Failure here is survivable — see the dated claim below.)
+  (Expected to pass — see the dated claim below. Failure is survivable but
+  is now a signal worth reporting, not the normal case.)
 
 Dated claims (the only environment statements allowed outside the probes;
 re-stamp or delete when re-verified):
 
-- Vault/task-folder writes that fail from Bash (`Read-only file system`)
-  succeed via the Write/Edit tools (verified 2026-09-03). Use Edit to
-  append; Write replaces whole files.
+- A session's OWN task folder is writable from ordinary Bash (verified
+  2026-09-03, INFRA-54): `cc-explore` carves exactly
+  `~/vault/20-surface/company/tasks/<task_id>/` into the sandbox fragment
+  it launches under — its own folder only — and branched sessions are not
+  sandboxed at all. Measured in a live EXPLORE session: own folder `rc=0`,
+  sibling task folder / `tasks/` itself / `_command-center/state/` all
+  `rc=1 Read-only file system`. So do NOT reach for a bypass to write your
+  report, and do not expect to write a sibling's folder at all. If a write
+  does fail, the Write/Edit tools still succeed (Edit appends, Write
+  replaces whole files).
 <!-- EA: add task-specific dated claims here, each with its stamp. A
      claim you cannot stamp goes in as a probe or not at all. -->
 

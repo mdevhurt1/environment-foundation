@@ -147,7 +147,7 @@ assert_eq "cc-explore: .cc-mode records the slug" "myslug" "$(mode_val "$WT" slu
 sid=$(mode_val "$WT" session_id)
 assert_eq "cc-explore: session_id is 22 chars" "22" "${#sid}"
 assert_eq "cc-explore: sandbox settings written into the worktree" \
-    '{"sandbox":{"enabled":true,"failIfUnavailable":true,"filesystem":{"allowWrite":["~/vault/20-surface/claude-memory","~/vault/20-surface/claude-transcripts","~/vault/20-surface/claude-specs","~/vault/20-surface/claude-plans","~/vault/20-surface/company/tree/sessions","~/vault/20-surface/company/_command-center/state/promotion-queue.md"]}}}' \
+    '{"sandbox":{"enabled":true,"failIfUnavailable":true,"filesystem":{"allowWrite":["~/vault/20-surface/claude-memory","~/vault/20-surface/claude-transcripts","~/vault/20-surface/claude-specs","~/vault/20-surface/claude-plans","~/vault/20-surface/company/tree/sessions","~/vault/20-surface/company/_command-center/state/promotion-queue.md","~/vault/20-surface/company/tasks/myslug"]}}}' \
     "$(cat "$WT/.cc-sandbox-settings.json" 2>/dev/null)"
 
 # AI_ST-64: the fragment must carve out every dir the end-conversation
@@ -166,6 +166,36 @@ assert_contains "cc-explore: sandbox allowWrite covers the promotion queue file 
     "_command-center/state/promotion-queue.md" "$sandbox_json"
 assert_not_contains "cc-explore: sandbox allowWrite does not open the whole state/ dir" \
     '_command-center/state"' "$sandbox_json"
+
+# INFRA-54: the task-folder carveout is PER SESSION. The fragment must name
+# this session's own task folder and nothing else under tasks/ — a blanket
+# "company/tasks" entry would hand every EXPLORE session write access to
+# every other task's spec, plan and report, which is the failure this
+# ticket exists to avoid. Assert the scoping from both sides.
+assert_contains "cc-explore: sandbox allowWrite covers THIS session's task folder" \
+    '"~/vault/20-surface/company/tasks/myslug"' "$sandbox_json"
+assert_not_contains "cc-explore: sandbox allowWrite does not open the whole tasks/ dir" \
+    '"~/vault/20-surface/company/tasks"' "$sandbox_json"
+
+# The task id in the fragment is the .cc-mode slug — the identity CLAUDE.md
+# derives task_id from when there is no Plane issue, and the value
+# cc-tree-slot-write.sh defaults the slot's task_id to.
+assert_eq "cc-explore: the carved-out task id IS the .cc-mode slug" \
+    "$(mode_val "$WT" slug)" \
+    "$(python3 -c 'import json,sys
+d=json.load(open(sys.argv[1]))
+w=[e for e in d["sandbox"]["filesystem"]["allowWrite"] if "company/tasks/" in e]
+print(w[0].rsplit("/",1)[1] if len(w)==1 else "EXPECTED-EXACTLY-ONE-GOT-%d" % len(w))' "$WT/.cc-sandbox-settings.json" 2>/dev/null)"
+
+# An allowWrite entry for a directory that does not exist is inert: creating
+# it is a write to tasks/, which stays denied (measured live, INFRA-54 probe
+# table). So the launcher must create the folder OUT HERE, unsandboxed.
+# ($FAKEHOME, not $HOME: with_env swaps HOME only for the duration of the
+# call, so the assertion has to name the fake home explicitly or it would
+# read the operator's real vault and pass for the wrong reason.)
+[ -d "$FAKEHOME/vault/20-surface/company/tasks/myslug" ] \
+    && t_pass "cc-explore: the carved-out task folder is created at launch" \
+    || t_fail "cc-explore: the carved-out task folder is created at launch"
 
 claude_seen=$(cat "$CLAUDE_LOG" 2>/dev/null)
 # The wrapper passes the worktree path as it built it — relative to the repo
@@ -221,6 +251,66 @@ assert_contains "cc-continue: resume re-locates the sandbox settings" \
     ".cc-sandbox-settings.json" "$resumed"
 assert_contains "cc-continue: resume replays the ORIGINAL session id" \
     "CC_SESSION_ID=$sid" "$resumed"
+
+# INFRA-54: a resume REGENERATES the fragment rather than reusing whatever it
+# finds. A worktree created before a carveout existed would otherwise stay on
+# the old, narrower policy for the rest of its life. Stale it deliberately and
+# assert the resume heals it in place.
+printf '%s\n' '{"sandbox":{"enabled":true,"failIfUnavailable":true,"filesystem":{"allowWrite":["~/vault/20-surface/claude-memory"]}}}' \
+    > "$WT/.cc-sandbox-settings.json"
+t_run with_env "$WT" cc-continue
+assert_eq "cc-continue: resume with a stale fragment exits 0" "0" "$T_RC"
+stale_healed=$(cat "$WT/.cc-sandbox-settings.json" 2>/dev/null)
+assert_contains "cc-continue: a stale fragment is regenerated with the full list" \
+    "_command-center/state/promotion-queue.md" "$stale_healed"
+assert_contains "cc-continue: a stale fragment regains the per-session task folder" \
+    '"~/vault/20-surface/company/tasks/myslug"' "$stale_healed"
+
+# The regenerated fragment must land WHERE IT WAS FOUND. Resuming from a
+# subdir must not strand a second fragment there — the upward walk would then
+# find the subdir copy from some paths and the worktree copy from others.
+mkdir -p "$WT/deep"
+t_run with_env "$WT/deep" cc-continue
+assert_eq "cc-continue: resume from a subdir exits 0" "0" "$T_RC"
+[ -f "$WT/deep/.cc-sandbox-settings.json" ] \
+    && t_fail "cc-continue: resume from a subdir strands no second fragment" \
+    || t_pass "cc-continue: resume from a subdir strands no second fragment"
+
+# A task id that is not [a-zA-Z0-9_-]+ must drop the entry, not interpolate
+# into the JSON. cc-explore validates its slug, but cc-continue reads the
+# value back out of a file a human can edit, and it reaches both a JSON
+# string and a mkdir path.
+cp "$WT/.cc-mode" "$WT/.cc-mode.bak"
+sed -i 's|^slug=.*|slug=bad\\ id\"$(x)|' "$WT/.cc-mode"
+t_run with_env "$WT" cc-continue
+assert_eq "cc-continue: a hostile slug still resumes" "0" "$T_RC"
+assert_contains "cc-continue: the dropped carveout is announced, not silent" \
+    "omitting the per-session task-folder carveout" "$T_ERR"
+hostile_json=$(cat "$WT/.cc-sandbox-settings.json" 2>/dev/null)
+python3 -c 'import json,sys; json.loads(sys.stdin.read())' <<<"$hostile_json" \
+    && t_pass "cc-continue: a hostile slug leaves the fragment valid JSON" \
+    || t_fail "cc-continue: a hostile slug leaves the fragment valid JSON"
+assert_not_contains "cc-continue: a hostile slug adds no tasks/ entry at all" \
+    "company/tasks/" "$hostile_json"
+mv "$WT/.cc-mode.bak" "$WT/.cc-mode"
+
+# CLAUDE.md's task-identity rule: the Plane issue id when the task has one,
+# the slug otherwise. A worktree that acquires a `plane_issue=` line must
+# have its carveout follow the folder the work actually lands in — the same
+# derivation the brainstorming skill and cc-plane-sync.sh use.
+cp "$WT/.cc-mode" "$WT/.cc-mode.bak"
+printf 'plane_issue=PROJ-321\n' >> "$WT/.cc-mode"
+t_run with_env "$WT" cc-continue
+assert_eq "cc-continue: resume with a plane_issue exits 0" "0" "$T_RC"
+plane_json=$(cat "$WT/.cc-sandbox-settings.json" 2>/dev/null)
+assert_contains "cc-continue: the carveout follows plane_issue, not the slug" \
+    '"~/vault/20-surface/company/tasks/PROJ-321"' "$plane_json"
+assert_not_contains "cc-continue: the slug's folder is not ALSO carved out" \
+    '"~/vault/20-surface/company/tasks/myslug"' "$plane_json"
+[ -d "$FAKEHOME/vault/20-surface/company/tasks/PROJ-321" ] \
+    && t_pass "cc-continue: the plane_issue task folder is created on resume" \
+    || t_fail "cc-continue: the plane_issue task folder is created on resume"
+mv "$WT/.cc-mode.bak" "$WT/.cc-mode"
 
 # --- cc-branch: refusals --------------------------------------------------
 t_run with_env "$REPO" cc-branch

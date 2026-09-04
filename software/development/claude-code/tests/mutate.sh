@@ -29,6 +29,8 @@ declare -A SUBJECTS=(
     [doctor]="$MODULE_DIR/scripts/doctor.sh"
     [configure]="$MODULE_DIR/scripts/configure.sh"
     [planesync]="$MODULE_DIR/canonical/shell/cc-plane-sync.sh"
+    [guard]="$MODULE_DIR/canonical/shell/cc-outbound-guard.sh"
+    [emit]="$MODULE_DIR/canonical/shell/cc-event-emit.sh"
 )
 declare -A SUBJECT_ENV=(
     [functions]=CC_FUNCTIONS_UNDER_TEST
@@ -36,6 +38,8 @@ declare -A SUBJECT_ENV=(
     [doctor]=DOCTOR_UNDER_TEST
     [configure]=CONFIGURE_UNDER_TEST
     [planesync]=PLANE_SYNC_UNDER_TEST
+    [guard]=GUARD_UNDER_TEST
+    [emit]=EMIT_UNDER_TEST
 )
 
 # A test that has never been seen to fail proves nothing. Each mutation below
@@ -626,6 +630,86 @@ FROM
         "CC_SESSION_ID=$(printf '%q' "$parent_session_id") claude${model_flag}${perm_flag}"
 TO
 )"
+
+# ---- cc-outbound-guard.sh (INFRA-67) -------------------------------------
+#
+# The guard had no mutations at all until INFRA-67, which is why the INFRA-66
+# audit could find four gap classes in a file whose 74 assertions were green:
+# every one of those assertions tested a spelling the guard already handled.
+# Each mutation below reverts one INFRA-67 fix to the exact shape the audit
+# measured as vulnerable.
+
+# Revert the host-allowlist inversion (§3.2) by making every target look
+# internal. This is the whole of gap shape A: unprompted POSTs to Slack,
+# pastebin, GitLab, Discord, Telegram and a file drop all pass again.
+add_mut "host allowlist treats every target as internal" test_outbound_guard.sh \
+"$(cat <<'FROM'
+        grep -qE "^${INTERNAL}$" <<<"$h" || return 0
+FROM
+)" "$(cat <<'TO'
+        grep -qE "." <<<"$h" || return 0
+TO
+)" guard
+
+# Revert the attached-flag spelling on -X (§3.3): require the space back, and
+# `curl -XPOST` walks through exactly as the audit measured.
+add_mut "-X pattern requires a space again" test_outbound_guard.sh \
+"$(cat <<'FROM'
+    has ' -X ?(POST|PUT|PATCH|DELETE)\b' "$1" \
+FROM
+)" "$(cat <<'TO'
+    has ' -X (POST|PUT|PATCH|DELETE)\b' "$1" \
+TO
+)" guard
+
+# Revert the body-flag spelling (§3.3): trailing space required, so -d@b.json,
+# -Fa=b and -Tb.json stop matching.
+add_mut "body flags require a trailing space again" test_outbound_guard.sh \
+"$(cat <<'FROM'
+    || has ' (-d|-F|-T)[ =]?[^ -]' "$1" \
+FROM
+)" "$(cat <<'TO'
+    || has ' (-d|-F|-T) ' "$1" \
+TO
+)" guard
+
+# Revert the gh api attached shorthand (§3.4). `gh api` appears in no deny rule
+# at all, so this guard is the only layer, and `-ftitle=x` is one keystroke.
+add_mut "gh api -f shorthand needs a trailing space again" test_outbound_guard.sh \
+"$(cat <<'FROM'
+        || has ' -[fF] ?[^ -]' "$nq" \
+FROM
+)" "$(cat <<'TO'
+        || has ' -[fF] ' "$nq" \
+TO
+)" guard
+
+# Stop splitting the command into segments, so write flags are matched across a
+# whole pipeline again. That is the false positive this change was probed into
+# fixing: `curl -s https://example.com/x | grep -F needle` reads as a write.
+add_mut "write flags matched across the whole pipeline" test_outbound_guard.sh \
+"$(cat <<'FROM'
+    done <<<"$(tr '|;&' '\n' <<<"$nq")"
+FROM
+)" "$(cat <<'TO'
+    done <<<"$nq"
+TO
+)" guard
+
+# ---- cc-event-emit.sh (INFRA-67) -----------------------------------------
+#
+# --body-file shipped untested in AI_ST-72/74. Silently ignoring the flag is
+# the failure that matters: an escalation would be emitted with an EMPTY body
+# rather than failing, so the parent gets a notification and none of the
+# content — the exact case INFRA-66 §6 needed the flag for.
+add_mut "--body-file is silently ignored" test_event_emit.sh \
+"$(cat <<'FROM'
+        BODY=$(cat "$BODY_FILE")
+FROM
+)" "$(cat <<'TO'
+        BODY="$BODY"
+TO
+)" emit
 
 # ==========================================================================
 

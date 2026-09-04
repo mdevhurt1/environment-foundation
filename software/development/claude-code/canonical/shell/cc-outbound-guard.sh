@@ -24,6 +24,15 @@
 # NORMALISED command — quotes stripped, whitespace collapsed, case folded — so
 # both of those spellings land on the same string as the plain one.
 #
+# Scope (widened by INFRA-67, after the INFRA-66 audit): the raw-HTTP branch
+# was once scoped to github.com, on the sound reasoning that a POST to an
+# internal service is ordinary work. But that denylisted one host instead of
+# allowlisting the internal ones, so Slack webhooks, pastebins, GitLab,
+# Discord, Telegram and public file-drop services were all wide open — public
+# posting and vault exfiltration alike, none of it needing a GitHub credential.
+# The host test is now an allowlist (INTERNAL, below), which is the policy
+# itself rather than an approximation of it.
+#
 # And the hole no glob can express at all: `gh api` is a read or a write
 # depending on flags that carry no verb. Any -f/-F/--field/--raw-field/--input
 # makes `gh api` default to POST. `Bash(gh api:*)` would break every read;
@@ -106,7 +115,108 @@ has() { grep -Eq "$1" <<<"${2-$n}"; }
 # arrives as `"command":"gh issue create …"` with the quotes already stripped.
 B='(^| |;|&|\||\(|`|=|:|,)'
 
+# --- the internal allowlist ----------------------------------------------
+#
+# The policy, as canonical/settings.json's own autoMode.environment block
+# states it: posting beyond this machine is the CEO's act, while a request to
+# an internal service is ordinary work.
+#
+# Until INFRA-67 the raw-HTTP branch approximated that policy with a single
+# hostname — it fired only when the command contained `github.com`, and exited
+# 0 on everything else. The reasoning ("a POST to an internal service is
+# ordinary work") was right; the implementation inverted the wrong way round.
+# INFRA-66 §3.2 measured the cost: unprompted POSTs to Slack webhooks,
+# pastebin, gitlab.com, Discord, Telegram and api.githubcopilot.com all passed,
+# as did a file upload of any vault path to a public drop service. None of
+# those needs a GitHub credential, so the whole middle of the policy was
+# uncovered.
+#
+# So the test is an ALLOWLIST now. Adding an internal service is a one-line
+# edit here, which is the point: the list is the policy, written down.
+INTERNAL='(plane\.homelab|git-docs\.homelab|localhost|127\.0\.0\.1|192\.168\.1\.[0-9]{1,3})'
+
 reason=""
+
+# url_targets <text> -- the hosts <text> names, one per line: scheme, userinfo,
+# port and trailing dot stripped. Only `scheme://host` spellings count. A bare
+# dotted token is far more often a filename than a host, and treating every one
+# as a target would block `curl -d @body.json http://plane.homelab/…` on the
+# strength of `body.json`.
+url_targets() {
+    grep -oE 'https?://[^ /]+' <<<"$1" \
+        | sed -e 's|https\?://||' -e 's/^[^@]*@//' -e 's/:[0-9]*$//' -e 's/\.$//'
+}
+
+# outbound_target -- true when this request should be treated as leaving the
+# LAN: it names a host that is not on the allowlist, OR it names no internal
+# host at all.
+#
+# That second clause is what makes the branch fail CLOSED. `curl -K post.conf`
+# keeps its URL and its body in a file this guard never reads, so there is
+# nothing to allowlist against; INFRA-66 §3.3 notes the config forms are
+# unfixable by string matching in principle. Same for a URL hidden in a shell
+# variable. The guard's standing trade applies — a false block costs one
+# message, a false allow costs a post that cannot be unpublished.
+outbound_target() {
+    local h internal=0
+    while IFS= read -r h; do
+        [ -n "$h" ] || continue
+        grep -qE "^${INTERNAL}$" <<<"$h" || return 0
+        internal=1
+    done <<<"$(url_targets "$1")"
+    [ "$internal" -eq 1 ] && return 1
+    return 0
+}
+
+# write_shaped_http -- curl/wget flags that carry a body or name a method.
+#
+# Every pattern accepts the ATTACHED and `=` spellings alongside the spaced
+# one. Until INFRA-67 they required a leading AND a trailing space, so ordinary
+# valid curl walked straight through (INFRA-66 §3.3): `-XPOST`, `-d@b.json`,
+# `-Fa=b`, `-Tb.json`, `--request=POST`, `--data={…}` and `--json=@b.json`. The
+# audit confirmed curl parses the attached form rather than rejecting it —
+# `curl -XPOST -d@/dev/null --max-time 2 http://127.0.0.1:1/` returns rc=7
+# (connection refused, flags parsed), not rc=2 (unknown option).
+#
+# --form, --form-string and --data-ascii were missing from the set outright and
+# passed even spaced. -K/--config are write-shaped by default, since the guard
+# cannot see what the config file asks for.
+#
+# The subject is a segment of $nq, NOT the lowercased $n: case is load-bearing
+# here, because curl's -F (form POST) and -f (fail silently) are different
+# flags and folding case would conflate them.
+write_shaped_http() {
+    has ' -X ?(POST|PUT|PATCH|DELETE)\b' "$1" \
+    || has ' --request[= ](POST|PUT|PATCH|DELETE)\b' "$1" \
+    || has ' (-d|-F|-T)[ =]?[^ -]' "$1" \
+    || has ' --(data|data-raw|data-binary|data-ascii|data-urlencode|json|form|form-string|upload-file)[= ]' "$1" \
+    || has ' (-K|--config)[= ]?[^ -]' "$1" \
+    || has ' --(post-data|post-file|method=(POST|PUT|PATCH|DELETE))' "$1"
+}
+
+# raw_http_write -- true when some pipeline segment invokes curl or wget with a
+# write-shaped flag against a target outside the allowlist.
+#
+# Everywhere else this guard matches the WHOLE normalised command, deliberately
+# over-broad. Here that breadth has a concrete cost, found by probing this
+# change rather than by predicting it: flags belong to the command that owns
+# them, and ` -F ` is a form POST to curl but a fixed-string match to grep. On
+# the whole string, `curl -s https://example.com/x | grep -F needle` — a plain
+# fetch and filter — read as a write to an external host and was refused.
+#
+# So the flag and host tests run per segment, on the segments that actually
+# invoke a client. This is not a loophole: a body piped INTO curl still lands
+# in curl's own segment, and a posting segment after a harmless one is still
+# its own segment. Splitting on the shell operators keeps both.
+raw_http_write() {
+    local seg
+    while IFS= read -r seg; do
+        grep -qE "${B}(curl|wget)\b" <<<"$seg" || continue
+        write_shaped_http "$seg" || continue
+        outbound_target "$(tr '[:upper:]' '[:lower:]' <<<"$seg")" && return 0
+    done <<<"$(tr '|;&' '\n' <<<"$nq")"
+    return 1
+}
 
 # --- gh: the verbs that publish -----------------------------------------
 #
@@ -131,23 +241,19 @@ elif has "${B}gh alias (set|delete)\b"; then
 elif has "${B}gh api\b" && {
         has ' (-x|--method) (post|put|patch|delete)\b' \
         || has ' (--field|--raw-field|--input)\b' \
-        || has ' -[fF] ' "$nq" \
+        || has ' -[fF] ?[^ -]' "$nq" \
         || { has 'graphql' && has 'mutation'; }
      }; then
     reason="gh api call that mutates (explicit verb, a field flag, or a graphql mutation)"
 
-# --- raw HTTP under the keyring token ------------------------------------
+# --- raw HTTP leaving the LAN --------------------------------------------
 #
-# Host-scoped on purpose: a POST to an internal service is ordinary work, and
-# blocking every POST on the machine would be a different (and wrong) policy.
-elif has '(api\.|uploads\.|gist\.)?github\.com' && {
-        has ' -X (POST|PUT|PATCH|DELETE)\b' "$nq" \
-        || has ' --request (POST|PUT|PATCH|DELETE)\b' "$nq" \
-        || has ' (-d|--data|--data-raw|--data-binary|--data-urlencode|--json|-T|--upload-file) ' "$nq" \
-        || has ' -F ' "$nq" \
-        || has ' --(post-data|post-file|method=(POST|PUT|PATCH|DELETE))' "$nq"
-     }; then
-    reason="HTTP request that writes to github.com under the CEO's credentials"
+# Scoped to an actual HTTP client, not to the flags alone: ` -F ` means a form
+# POST to curl and a fixed-string match to grep, and blocking `grep -F` would
+# be a different (and absurd) policy. The host test is the allowlist above, so
+# internal work stays ordinary and everything beyond it is publication.
+elif raw_http_write; then
+    reason="HTTP request that writes to a host outside the internal allowlist"
 
 # --- the interpreter detour ----------------------------------------------
 #
@@ -195,6 +301,20 @@ Do this instead:
 Pushing a branch to the CEO's own fork or to internal Gitea is NOT posting and
 is not blocked. What is blocked is anything that renders as content under the
 CEO's identity on an external service.
+
+THIS IS NOT ONLY ABOUT GITHUB. The gate covers every host outside the internal
+allowlist, because a Slack webhook, a pastebin, a GitLab issue, a Discord or
+Telegram message and a file drop are all publication in exactly the sense the
+standing rule means — and an upload of a vault path to one of them is
+exfiltration besides. None of them needs a GitHub credential, so none of them
+is covered by anything else.
+
+Requests to internal services are ordinary work and are NOT blocked:
+  plane.homelab, git-docs.homelab, 192.168.1.*, 127.0.0.1 / localhost
+If your request was refused and its target IS internal, name the host in the
+URL on the command line. A request whose URL the guard cannot see — `curl -K` /
+`--config` reads both URL and body from a file, and a URL held in a shell
+variable is the same shape — is refused rather than guessed at.
 
 There is no environment variable, flag or retry that turns this off — an
 override an agent can reach is not a gate. If posting is genuinely required,

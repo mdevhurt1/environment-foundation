@@ -161,4 +161,99 @@ out8=$(bash "$EMIT" --dir "$D6/sessions/${PARENT}.events" --verb status --sessio
     --title $'line1\nline2' --body "x")
 assert_eq "title newlines flattened" "# line1 line2" "$(grep -m1 '^# ' "$out8")"
 
+# --- 8. --body-file: the body an agent cannot put on a command line ------
+#
+# INFRA-66 §6 hit this and could not report it through the normal channel: a
+# critical escalation about holes in the outbound guard was itself refused by
+# the outbound guard, because the body quoted the command shapes it was
+# reporting. The failure mode is worth stating plainly — the one thing a gate
+# must never obstruct is being told it has a hole, and a session that cannot
+# escalate through the channel is pushed toward exactly the write-then-run
+# evasion the red team catalogued.
+#
+# --body-file is the narrow fix: the body never appears in the command string,
+# so whole-command content matching has nothing to trip on. The guard-side half
+# of this contract is asserted in test_outbound_guard.sh §12.
+#
+# The flag predates this audit — it shipped with the helper in AI_ST-72/74 and
+# INFRA-66 recommended adding it without probing whether it was there. What was
+# genuinely missing is this coverage, so these assertions are characterisation
+# tests, and mutate.sh carries a matching mutation (emit/body-file-ignored) so
+# that they have been seen to fail.
+
+D8=$(t_tmpdir) || exit 1
+mkdir -p "$D8/ev"
+
+printf 'line one\nline two\nline three\n' > "$D8/body.md"
+out9=$(bash "$EMIT" --dir "$D8/ev" --verb status --session-id "$SID" --body-file "$D8/body.md")
+assert_contains "--body-file body reaches the event" "line two" "$(cat "$out9")"
+
+# The whole point: a body may quote the command shapes it is reporting on,
+# because it never passes through a command line to get there.
+printf 'The guard passes this shape:\n  curl -X POST https://hooks.slack.com/services/T/B/X -d payload=x\nReported to the EA.\n' \
+    > "$D8/incident.md"
+out10=$(bash "$EMIT" --dir "$D8/ev" --verb blocker --severity critical \
+    --session-id "$SID" --body-file "$D8/incident.md")
+assert_contains "a body quoting a blocked shape is written verbatim" \
+    "hooks.slack.com" "$(cat "$out10")"
+
+out11=$(printf 'from stdin\nsecond line\nthird line\n' \
+    | bash "$EMIT" --dir "$D8/ev" --verb status --session-id "$SID" --body-file -)
+assert_contains "--body-file - reads stdin" "from stdin" "$(cat "$out11")"
+
+out12=$(bash "$EMIT" --dir "$D8/ev" --verb status --session-id "$SID" --body-file="$D8/body.md")
+assert_contains "--body-file=PATH attached form" "line one" "$(cat "$out12")"
+
+# A missing body file must be a usage error, not an event with an empty body:
+# an escalation that silently loses its content is worse than one that fails.
+err=$(bash "$EMIT" --dir "$D8/ev" --verb status --session-id "$SID" --body-file "$D8/nope.md" 2>&1)
+assert_eq "missing body file refused (exit 2)" 2 "$?"
+assert_contains "missing body file names the path" "nope.md" "$err"
+
+# The completion-substance gate still applies to a body that arrived from a
+# file — otherwise --body-file would be a way to file a thin completion.
+printf 'only one line\n' > "$D8/thin.md"
+bash "$EMIT" --dir "$D8/ev" --verb completion --session-id "$SID" --body-file "$D8/thin.md" >/dev/null 2>&1
+assert_eq "thin completion from a file is still refused (exit 5)" 5 "$?"
+
+# --- 9. the path the dispatch brief hands to children --------------------
+#
+# A child that cannot emit cannot escalate, and it fails SILENTLY: the parent
+# simply never hears from it. So the invocation the brief template prints is
+# load-bearing, and until INFRA-67 nothing tested it.
+#
+# INFRA-66 §7 reported the documented path `~/.claude/skills/../shell/…` as
+# dead, reasoning that it resolves to `~/.claude/shell/`, which does not exist.
+# Measured here, it is alive: `~/.claude/skills` is a SYMLINK into the canonical
+# tree, and the kernel resolves `..` against the symlink's TARGET, so the path
+# lands on canonical/shell/ — where the helper is. The audit inferred the
+# lexical answer instead of probing.
+#
+# But it is alive by coincidence, not by design: it holds only while `skills`
+# is a symlink. On any install where `~/.claude/skills` is a real directory the
+# audit's reasoning becomes correct and every brief silently loses escalation.
+# Hence a probe-first form in the template, and these three assertions.
+
+TEMPLATE="$MODULE_DIR/canonical/templates/dispatch-brief.md"
+assert_eq "the dispatch-brief template exists" "0" "$([ -f "$TEMPLATE" ]; echo $?)"
+
+# The mechanism, reproduced without depending on this machine's install: a
+# `skills` symlink into canonical/ makes `skills/../shell/` reach the helper.
+D9=$(t_tmpdir) || exit 1
+ln -s "$MODULE_DIR/canonical/skills" "$D9/skills"
+assert_eq "skills-symlink '..' resolves to canonical/shell" "0" \
+    "$([ -f "$D9/skills/../shell/cc-event-emit.sh" ]; echo $?)"
+
+# And the shape that made the audit's reading correct: a REAL skills directory.
+mkdir -p "$D9/real/skills"
+assert_eq "a real skills dir makes the documented path dead" "1" \
+    "$([ -f "$D9/real/skills/../shell/cc-event-emit.sh" ]; echo $?)"
+
+# Because the path is install-dependent, the template must tell the child to
+# PROBE rather than trust one spelling, and must name a fallback that exists.
+assert_contains "template tells the child to probe for the helper" \
+    "command -v" "$(cat "$TEMPLATE")"
+assert_contains "template names the canonical repo path as fallback" \
+    "canonical/shell/cc-event-emit.sh" "$(cat "$TEMPLATE")"
+
 t_finish

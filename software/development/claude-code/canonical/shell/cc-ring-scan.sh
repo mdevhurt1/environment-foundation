@@ -9,8 +9,14 @@
 # path. The EA executes every mutation; this script only surveys. Keep it that
 # way — the read-only property is what makes it safe to run at any time.
 #
-# Exit 2 if the vault is not mounted. Otherwise exit 0 even when findings
-# exist; findings are data, not errors.
+# Exit 2 if the vault is not mounted. Exit 3 if the index-sync self-consistency
+# guard trips (INFRA-78) — an impossible metric combination, which means this
+# scanner and MEMORY.md disagree about format and no AUTO action may be
+# trusted. Otherwise exit 0 even when findings exist; findings are data, not
+# errors.
+#
+# Progress is traced to stderr, one line per section; stdout carries only the
+# report.
 
 set -euo pipefail
 
@@ -37,42 +43,207 @@ now=$(date +%s)
 ANOM=()
 anom() { ANOM+=("$1"$'\t'"$2"); }
 
+# Progress goes to stderr, one line per section. The script computes into bash
+# arrays and prints nothing until the emit block, so before this a long run was
+# indistinguishable from a hang -- which cost real diagnostic time during the
+# 2026-09-04 pass (INFRA-77). stdout stays machine-parseable.
+trace() { printf 'ring-scan: %s\n' "$*" >&2; }
+
+# norm_link <raw wiki-link text> -- sets $NL to the note stem it refers to.
+#
+# Obsidian link grammar is [[path/to/note#heading^block|alias]], and the vault
+# uses every part of it: 102 links in claude-memory alone carry an alias or a
+# path. Before INFRA-77 the raw text was looked up verbatim against a set of
+# bare basenames, so those links could never resolve -- 2,209 of 2,719 links on
+# the live vault were falsely unresolved, each one paying for a full-corpus
+# Levenshtein scan it did not need.
+#
+# Sets a global rather than printing, because this runs once per link
+# occurrence and $(...) would fork a subshell every time.
+#
+NL=""
+norm_link() {
+    local s="$1"
+    s="${s%%|*}"      # alias:  note|display text
+    s="${s%%#*}"      # heading anchor
+    s="${s%%^*}"      # block reference
+    # Strip trailing backslashes AFTER those splits, not before. The vault's
+    # _index.md files write [[20-surface/claude-memory/MEMORY\|`display`]] --
+    # an ESCAPED PIPE -- so the backslash only becomes trailing once the alias
+    # has been removed. Stripping first silently misses every one of them. The
+    # escaped-bracket form [[MEMORY\]] is covered by the same strip, because
+    # the splits above are no-ops on it.
+    while [ -n "$s" ] && [ "${s: -1}" = '\' ]; do s="${s%?}"; done
+    s="${s##*/}"      # path -> basename
+    s="${s%.md}"      # an explicit extension is still the same note
+    NL="$s"
+}
+
 # ---- index sync (AUTO) ----
-# Missing = file exists but MEMORY.md contains no line mentioning its basename.
+# MEMORY.md is written by cc-memory-index-regen.sh as one line per memory:
+#     - [[stem]] — hook
+# That script is the FORMAT AUTHORITY. This scanner must agree with it; when
+# the two disagree, this file is the one that is wrong.
+#
+# INFRA-78: this block used to ask `grep -qF "<stem>.md" MEMORY.md`. The
+# AI_ST-69 compaction rewrote the index to extensionless wiki-links, so the
+# fixed-string grep stopped matching and ALL 471 files were reported missing --
+# an AUTO action, applied without asking, that would have appended a duplicate
+# of the entire index in the superseded format. Compare on the filename STEM
+# and read the index by extracting [[...]] targets, per the 2026-09-04
+# CLAUDE.md amendment that inline links resolve on the filename stem.
+trace "index sync"
+
+# Read ENTRY lines only, and only their leading wiki-link. The file's own
+# header comment documents the format with a literal "[[name]] — hook"
+# example, so a whole-file grep for [[...]] adopts `name` as an index target
+# and then reports it dead — the index's documentation would show up as a
+# proposed AUTO deletion.
+#
+# Being strict here is also what keeps the guard below honest: if the format
+# drifts again, this extractor yields nothing while mem_indexed still counts
+# the entry lines, which is exactly the impossible combination the guard
+# catches. A lenient parser would absorb the drift silently.
+declare -A IDX=()
+while IFS= read -r stem; do
+    [ -z "$stem" ] && continue
+    norm_link "$stem"
+    [ -n "$NL" ] && IDX["$NL"]=1
+done < <( { sed -n 's/^- \[\[\([^]]*\)\]\].*/\1/p' "$MEM/MEMORY.md" 2>/dev/null || true; } )
+
 # A file without description: frontmatter is NOT auto-addable — nothing
 # synthesizes a description — so it is reported instead.
 mem_files=0
-MEM_ADD=()
 MEM_NODESC=()
+ADD_STEMS=()
+ADD_DESCS=()
 while IFS= read -r f; do
     b=$(basename "$f")
     [ "$b" = "MEMORY.md" ] && continue
     mem_files=$((mem_files + 1))
-    if ! grep -qF "$b" "$MEM/MEMORY.md" 2>/dev/null; then
-        d=$( { grep -m1 '^description:' "$f" || true; } | sed 's/^description: *//')
-        if [ -z "$d" ]; then
-            MEM_NODESC+=("$b")
-        else
-            MEM_ADD+=("$b"$'\t'"$d")
-        fi
+    stem="${b%.md}"
+    [ -n "${IDX[$stem]:-}" ] && continue
+    d=$( { grep -m1 '^description:' "$f" || true; } | sed 's/^description: *//')
+    if [ -z "$d" ]; then
+        MEM_NODESC+=("$stem")
+    else
+        ADD_STEMS+=("$stem")
+        ADD_DESCS+=("$d")
     fi
 done < <(find "$MEM" -maxdepth 1 -name '*.md' -type f | sort)
 
-# Dead = an index link target that no longer exists on disk.
+# Emit each addition as the LINE TO APPEND, in the compacted format, with the
+# hook cut by the same rule cc-memory-index-regen.sh uses. A fix written in the
+# old format would itself reintroduce the drift it exists to repair, and a fix
+# with an uncut hook would be reformatted by the next regen — so the row is
+# built to be byte-identical to what the generator would have written.
+#
+# gawk's length()/substr() are character-oriented in a UTF-8 locale, matching
+# Python's, which is what lets this mirror the generator's rule exactly around
+# the em-dash. One awk process, and only when there is something to add.
+MEM_ADD=()
+if [ "${#ADD_STEMS[@]}" -gt 0 ]; then
+    while IFS= read -r row; do
+        [ -n "$row" ] && MEM_ADD+=("$row")
+    done < <(
+        for i in "${!ADD_STEMS[@]}"; do
+            printf '%s\t%s\n' "${ADD_STEMS[$i]}" "${ADD_DESCS[$i]}"
+        done | awk -F'\t' '
+        function rstrip(x) { sub(/[ \t]+$/, "", x); return x }
+        function hookify(d,   n, s, off, p, strong, weak, cut, i, ch) {
+            n = length(d)
+            if (n <= 72) return d
+            strong = -1; off = 0; s = d
+            while (match(s, /(; | — | -- | - |\. )/)) {
+                p = off + RSTART - 1
+                if (p >= 30 && p <= 72) strong = p
+                off = off + RSTART - 1 + RLENGTH
+                if (off >= n) break
+                s = substr(d, off + 1)
+            }
+            if (strong >= 0) return rstrip(substr(d, 1, strong))
+            weak = -1; off = 0; s = d
+            while (match(s, /(, |: )/)) {
+                p = off + RSTART - 1
+                if (p >= 30 && p <= 60) weak = p
+                off = off + RSTART - 1 + RLENGTH
+                if (off >= n) break
+                s = substr(d, off + 1)
+            }
+            if (weak >= 0) return rstrip(substr(d, 1, weak))
+            cut = substr(d, 1, 60)
+            i = length(cut)
+            while (i > 0 && substr(cut, i, 1) != " ") i--
+            if (i > 0) cut = substr(cut, 1, i - 1)
+            while (length(cut) > 0) {
+                ch = substr(cut, length(cut), 1)
+                if (ch == " " || ch == "," || ch == ";" || ch == ":" || ch == "—" || ch == "-")
+                    cut = substr(cut, 1, length(cut) - 1)
+                else break
+            }
+            return cut "…"
+        }
+        { printf "- [[%s]] — %s\n", $1, hookify($2) }'
+    )
+fi
+
+# Dead = an index entry whose file no longer exists.
+#
+# INFRA-78: this used to extract markdown-link targets with
+# grep -oE '\]\([^)]*\.md\)' — syntax the compacted index has not contained
+# since AI_ST-69. It therefore always found zero, so memory.dead=0 was a false
+# clean: the check was structurally incapable of returning anything else.
 MEM_DEAD=()
-while IFS= read -r p; do
-    [ -z "$p" ] && continue
-    [ -f "$MEM/$p" ] || MEM_DEAD+=("$p")
-done < <( { grep -oE '\]\([^)]*\.md\)' "$MEM/MEMORY.md" || true; } \
-          | sed 's/^](//; s/)$//' | sort -u)
+if [ "${#IDX[@]}" -gt 0 ]; then
+    for t in "${!IDX[@]}"; do
+        [ -f "$MEM/$t.md" ] || MEM_DEAD+=("$t")
+    done
+fi
+if [ "${#MEM_DEAD[@]}" -gt 1 ]; then
+    mapfile -t MEM_DEAD < <(printf '%s\n' "${MEM_DEAD[@]}" | sort)
+fi
 
 mem_indexed=$( { grep -c '^- \[' "$MEM/MEMORY.md" || true; } )
 mem_sep_legacy=$( { grep -c ') -- ' "$MEM/MEMORY.md" || true; } )
+mem_missing=${#MEM_ADD[@]}
+
+# ---- fail-closed self-consistency guard (AUTO tier, INFRA-78) ----
+# Every memory file reported BOTH absent from the index and counted in it. No
+# real index is in that state: it is the arithmetic signature of this scanner
+# and MEMORY.md disagreeing about format.
+#
+# This guard deliberately does NOT encode the 2026-09-04 drift — it encodes the
+# SHAPE of that class of fault, so it still fires for the next format change,
+# which by definition nobody has thought of yet. Remit 1 is AUTO, applied
+# without asking, and it writes a file injected into every session; an AUTO
+# tier with that reach has to fail closed rather than guess.
+#
+# Abort here, before the expensive dead-link survey, so the failure is loud and
+# fast rather than loud and forty minutes late.
+if [ "$mem_missing" -gt 0 ] \
+   && [ "$mem_missing" -eq "$mem_files" ] \
+   && [ "$mem_indexed" -eq "$mem_files" ]; then
+    {
+        printf 'FAIL: cc-ring-scan self-consistency check failed — refusing to emit AUTO actions.\n'
+        printf '      memory.files=%s memory.indexed=%s memory.missing=%s\n' \
+            "$mem_files" "$mem_indexed" "$mem_missing"
+        printf '      Every memory file is reported both indexed AND missing. That cannot be\n'
+        printf '      true of a real index; it is the signature of a format mismatch between\n'
+        printf '      this scanner and MEMORY.md (INFRA-78, 2026-09-04).\n'
+        printf '      Applying auto.index_add in this state would append a duplicate of the\n'
+        printf '      whole index. Nothing has been emitted.\n'
+        printf '      Compare the index against its format authority before re-running:\n'
+        printf '        %s\n' "$MEM/MEMORY.md"
+        printf '        ~/.claude/cc-memory-index-regen.sh\n'
+    } >&2
+    exit 3
+fi
 
 # ---- tree slots (PROPOSE) ----
 # Two passes. The first records the parent_id of every running slot so the
 # second can refuse to archive a live child's parent — archiving it would
 # silently break event delivery to a session that is still working.
+trace "tree slots"
 declare -A RUNNING_PARENTS=()
 declare -A RUNNING_TASKS=()
 while IFS= read -r s; do
@@ -131,6 +302,7 @@ done < <(find "$TREE" -maxdepth 1 -name '*.md' -type f | sort)
 # Eligible = no file modified within TASK_AGE_DAYS AND no running slot claims
 # that task_id. The running-slot check is what stops this archiving the folder
 # of a session that is working right now.
+trace "task folders"
 tasks_count=0
 tasks_bytes=0
 TASK_PROP=()
@@ -166,6 +338,7 @@ done < <(find "$TASKS" -mindepth 1 -maxdepth 1 -type d | sort)
 # state/ is this skill's own working directory, so it is in remit — otherwise
 # ring-health reports accumulate forever in the one place nothing collects.
 # The protected set is never eligible under any age.
+trace "state hygiene"
 state_files=0
 briefs_elig=0
 STATE_PROP=()
@@ -212,6 +385,7 @@ fi
 # ---- promotion backlog (AUTO fold + PROPOSE markers) ----
 # The glob is promotion-* not promotion-candidates-*: the files present use
 # three different naming patterns and the narrower glob catches only two.
+trace "promotion backlog"
 QUEUE="$STATE/promotion-queue.md"
 FOLD=()
 if [ -d "$STATE" ]; then
@@ -241,76 +415,130 @@ done < <( { grep -rniE 'promotion.candidate' "$MEM" "$TASKS" 2>/dev/null || true
 # An unresolved [[link]] is NOT an error by itself: the auto-memory protocol
 # says it marks something worth writing later. Only near-misses are typos, so
 # only those are listed. Distance <= 2 or case-insensitive exact.
+trace "dead links: extracting and normalising"
+
 mapfile -t NOTE_NAMES < <(find "$VAULT" -name '*.md' -type f -printf '%f\n' \
                           2>/dev/null | sed 's/\.md$//' | sort -u)
-
-lev_near() {
-    # $1 = candidate link text. Prints "name<TAB>distance" for the closest
-    # match when distance <= 2, else prints nothing.
-    printf '%s\n' ${NOTE_NAMES[@]+"${NOTE_NAMES[@]}"} | awk -v t="$1" '
-    function lev(a, b,   la, lb, i, j, c, prev, cur) {
-        la = length(a); lb = length(b)
-        if (la == 0) return lb
-        if (lb == 0) return la
-        for (j = 0; j <= lb; j++) prev[j] = j
-        for (i = 1; i <= la; i++) {
-            cur[0] = i
-            for (j = 1; j <= lb; j++) {
-                c = (substr(a, i, 1) == substr(b, j, 1)) ? 0 : 1
-                cur[j] = prev[j] + 1
-                if (cur[j-1] + 1 < cur[j]) cur[j] = cur[j-1] + 1
-                if (prev[j-1] + c < cur[j]) cur[j] = prev[j-1] + c
-            }
-            for (j = 0; j <= lb; j++) prev[j] = cur[j]
-        }
-        return prev[lb]
-    }
-    BEGIN { best = 99; bestn = "" }
-    {
-        # Never exit early here: this awk drains a printf that emits every
-        # note name in the vault, and exiting first would SIGPIPE it (141)
-        # under pipefail — the same failure the task loop above had. The awk
-        # read buffer puts that threshold near 300 KB and the vault is at
-        # ~50 KB today, so this is prevention, not a live bug. Note: no
-        # apostrophes in here — this comment lives inside a single-quoted awk
-        # program. `next` still skips the expensive lev() call, which is all
-        # the old `exit` bought.
-        if (found) next
-        if (tolower($0) == tolower(t)) { found = 1; bestn = $0; best = 0; next }
-        d = lev(tolower($0), tolower(t))
-        if (d < best) { best = d; bestn = $0 }
-    }
-    END { if (found) print bestn "\t0"; else if (best <= 2) print bestn "\t" best }
-    '
-}
-
-# Resolve against a hash set, not a linear scan, and near-match each DISTINCT
-# link exactly once. lev_near spawns an awk pass over every note name, so
-# calling it per link occurrence rather than per distinct link would make this
-# O(occurrences x notes) — minutes on a vault this size.
 declare -A NOTE_SET=()
 for n in ${NOTE_NAMES[@]+"${NOTE_NAMES[@]}"}; do NOTE_SET["$n"]=1; done
 
-DEADLINKS=()
-unresolved_total=0
-while IFS=$'\t' read -r link src; do
-    [ -z "$link" ] && continue
-    [ -n "${NOTE_SET[$link]:-}" ] && continue
-    unresolved_total=$((unresolved_total + 1))
-    near=$(lev_near "$link")
-    [ -n "$near" ] && DEADLINKS+=("$(basename "$src")"$'\t'"$link"$'\t'"$near")
-done < <( { grep -rnoE '\[\[[^]]+\]\]' "$SURFACE" 2>/dev/null || true; } \
-          | sed 's/:[0-9]*:/\t/' | sed 's/\[\[//; s/\]\]//' \
-          | awk -F'\t' '{ print $2 "\t" $1 }' | sort -u -t$'\t' -k1,1 )
+# One entry per DISTINCT normalised link, remembering the first file it was
+# seen in. Normalising before the dedupe is what collapses the live vault's
+# 2,719 raw occurrences to a few hundred real questions.
+declare -A LINK_SRC=()
+while IFS= read -r rec; do
+    [ -z "$rec" ] && continue
+    # rec is "path:line:[[link]]". Split on the LAST "[[" rather than the first
+    # ":" so a path containing a colon does not corrupt the source name.
+    head="${rec%%\[\[*}"
+    raw="${rec#"$head"}"
+    raw="${raw#\[\[}"; raw="${raw%\]\]}"
+    head="${head%:}"; src="${head%:*}"
+    norm_link "$raw"
+    [ -z "$NL" ] && continue
+    [ -n "${LINK_SRC[$NL]:-}" ] || LINK_SRC["$NL"]="${src##*/}"
+done < <( { grep -rnoE '\[\[[^]]+\]\]' "$SURFACE" 2>/dev/null || true; } )
 
-# Orphan = a memory file no other memory file links to.
+UNRES=()
+unresolved_total=0
+while IFS= read -r l; do
+    [ -z "$l" ] && continue
+    unresolved_total=$((unresolved_total + 1))
+    UNRES+=("$l")
+done < <(
+    if [ "${#LINK_SRC[@]}" -gt 0 ]; then
+        for l in "${!LINK_SRC[@]}"; do
+            [ -n "${NOTE_SET[$l]:-}" ] || printf '%s\n' "$l"
+        done
+    fi | sort
+)
+
+# Near-match every unresolved link in ONE awk pass, not one process per link.
+#
+# Two costs were stacked here before INFRA-77: ~2,200 awk spawns, each scanning
+# the whole 2,666-name corpus at ~1.26 s, for a projected ~46 min. The corpus is
+# now loaded once and bucketed BY NAME LENGTH, because Levenshtein distance is
+# at least the difference in lengths — so a name whose length differs by more
+# than 2 cannot possibly be within 2 and never needs the O(n*m) inner loop.
+DEADLINKS=()
+if [ "${#UNRES[@]}" -gt 0 ]; then
+    trace "dead links: near-matching ${#UNRES[@]} unresolved against ${#NOTE_NAMES[@]} names"
+    SPLIT=$'\x1e'
+    while IFS=$'\t' read -r cand bestn dist; do
+        [ -z "$cand" ] && continue
+        DEADLINKS+=("${LINK_SRC[$cand]}"$'\t'"$cand"$'\t'"$bestn"$'\t'"$dist")
+    done < <(
+        {
+            printf '%s\n' ${NOTE_NAMES[@]+"${NOTE_NAMES[@]}"}
+            printf '%s\n' "$SPLIT"
+            printf '%s\n' "${UNRES[@]}"
+        } | awk -v sep="$SPLIT" '
+        function lev(a, b,   la, lb, i, j, c, prev, cur) {
+            la = length(a); lb = length(b)
+            if (la == 0) return lb
+            if (lb == 0) return la
+            for (j = 0; j <= lb; j++) prev[j] = j
+            for (i = 1; i <= la; i++) {
+                cur[0] = i
+                for (j = 1; j <= lb; j++) {
+                    c = (substr(a, i, 1) == substr(b, j, 1)) ? 0 : 1
+                    cur[j] = prev[j] + 1
+                    if (cur[j-1] + 1 < cur[j]) cur[j] = cur[j-1] + 1
+                    if (prev[j-1] + c < cur[j]) cur[j] = prev[j-1] + c
+                }
+                for (j = 0; j <= lb; j++) prev[j] = cur[j]
+            }
+            return prev[lb]
+        }
+        $0 == sep { phase = 1; next }
+        phase == 0 {
+            L = length($0)
+            k = ++cnt[L]
+            name[L, k] = $0
+            low[L, k] = tolower($0)
+            next
+        }
+        {
+            t = $0; lt = tolower(t); L = length(t)
+            best = 99; bestn = ""
+            for (d = -2; d <= 2 && best > 0; d++) {
+                M = L + d
+                if (!(M in cnt)) continue
+                for (i = 1; i <= cnt[M]; i++) {
+                    if (low[M, i] == lt) { best = 0; bestn = name[M, i]; break }
+                    dd = lev(low[M, i], lt)
+                    if (dd < best) { best = dd; bestn = name[M, i] }
+                }
+            }
+            if (best <= 2 && bestn != "") print t "\t" bestn "\t" best
+        }'
+    )
+fi
+
+# Orphan = a memory file no OTHER memory file links to.
+#
+# INFRA-78, third defect of the same class: this used to run
+# `grep -rqF "[[$stem]]" "$MEM"` once per memory file. MEMORY.md lives inside
+# $MEM and carries [[stem]] for every indexed file, so the index always
+# satisfied the search and report.orphans was structurally always empty — the
+# same false clean as memory.dead. The literal also could not see the 102
+# aliased or path-bearing links the memory corpus actually uses.
+#
+# Build the inbound-link set once, excluding the index, and normalise it.
+trace "orphans"
+declare -A MEM_LINKED=()
+while IFS= read -r raw; do
+    [ -z "$raw" ] && continue
+    raw="${raw#*\[\[}"; raw="${raw%\]\]}"
+    norm_link "$raw"
+    [ -n "$NL" ] && MEM_LINKED["$NL"]=1
+done < <( { grep -rhoE '\[\[[^]]+\]\]' --exclude=MEMORY.md "$MEM" 2>/dev/null || true; } )
+
 ORPHANS=()
 while IFS= read -r f; do
     b=$(basename "$f" .md)
     [ "$b" = "MEMORY" ] && continue
-    if ! grep -rqF "[[$b]]" "$MEM" 2>/dev/null; then
-        ORPHANS+=("$b")
-    fi
+    [ -n "${MEM_LINKED[$b]:-}" ] || ORPHANS+=("$b")
 done < <(find "$MEM" -maxdepth 1 -name '*.md' -type f | sort)
 
 # ---- canon leak (REPORT-ONLY) ----
@@ -319,6 +547,7 @@ done < <(find "$MEM" -maxdepth 1 -name '*.md' -type f | sort)
 # the following run — the EA cross-references the canon-writes log in prior
 # ring-health reports to separate explained from unexplained. LiveSync also
 # touches mtimes, so this is "eyeball these", never an alarm.
+trace "canon leak"
 LEAKS=()
 if [ -f "$MARKER" ]; then
     while IFS= read -r f; do
@@ -331,6 +560,8 @@ else
 fi
 
 # ---- emit ----
+trace "emitting report"
+
 emit_section() {
     printf '## %s\n' "$1"
     shift
@@ -341,7 +572,7 @@ emit_section() {
 printf '## metrics\n'
 printf 'memory.files=%s\n'            "$mem_files"
 printf 'memory.indexed=%s\n'          "$mem_indexed"
-printf 'memory.missing=%s\n'          "${#MEM_ADD[@]}"
+printf 'memory.missing=%s\n'          "$mem_missing"
 printf 'memory.dead=%s\n'             "${#MEM_DEAD[@]}"
 printf 'memory.no_description=%s\n'   "${#MEM_NODESC[@]}"
 printf 'memory.separator_legacy=%s\n' "$mem_sep_legacy"

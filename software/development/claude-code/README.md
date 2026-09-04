@@ -225,3 +225,78 @@ this module). Three rings + journal:
 - `40-journal/` — daily voice practice
 
 Promotion is always manual, weekly cadence. See `00-core/_rituals/weekly-review.md`.
+
+## cc-scrub — disclosure scan (F1 arm)
+
+`canonical/scripts/cc-scrub.sh` scans a diff for **disclosure and topology
+tells** before they reach a public remote: RFC1918 host literals, absolute
+paths naming an operator account, session identifiers, and internal
+hostnames. It exists because a commit bound for this repo's public remote
+once carried the live LAN address of the Plane server, and finding it cost a
+full review session reading 1,283 added lines. One range-checked regex finds
+it and nothing else in the entire repository.
+
+```bash
+bash canonical/scripts/cc-scrub.sh                  # diff <baseline>..HEAD, incl. commit messages
+bash canonical/scripts/cc-scrub.sh --staged         # pre-commit
+bash canonical/scripts/cc-scrub.sh --range A..B     # pre-push
+bash canonical/scripts/cc-scrub.sh --audit          # absolute tree scan; not the default
+bash canonical/scripts/cc-scrub.sh --path <dir>     # pre-submission
+bash canonical/scripts/cc-scrub.sh --calibrate-only # prove the instrument, sweep nothing
+bash canonical/scripts/cc-scrub.sh --report <file>  # TSV for a reviewing session
+```
+
+| rule | tier | what it matches |
+|---|---|---|
+| `rfc1918-host` | BLOCK | an RFC1918 address with all four octets range-checked, excluding network and broadcast addresses |
+| `home-path` | BLOCK | an absolute path naming an operator account |
+| `session-id` | BLOCK | a session identifier token |
+| `homelab-host` | ADVISORY | an internal hostname |
+
+| exit | meaning |
+|---|---|
+| 0 | calibration passed, no blocking findings |
+| 1 | blocking findings |
+| 2 | **INCOMPLETE** — calibration failed, or the corpus could not be fully swept |
+| 3 | usage error |
+
+Three design decisions carry the whole tool, and each one is load-bearing:
+
+**It diffs against a baseline; it does not scan absolutely.** Every finding
+is classified `NEW` or `BASELINE` against a declared ref (default
+`origin/main`), and only a `NEW` hit in a BLOCK-tier rule blocks. Run
+absolutely, a scrubber reports the same already-published values on every
+invocation and is muted within a week. `--audit` is the mode you reach for
+deliberately, never the default.
+
+**Classification is channel-consistent.** A finding in file content is judged
+against the baseline's *files*; a finding in a commit message is judged
+against files *and* message history. This is not pedantry — measured on this
+repo, an earlier scrub removed the LAN address from tracked files and then
+quoted it four times in its own commit message. Judging file content against
+message history would have downgraded the exact literal that produced the
+company's only BLOCK verdict. A file-channel hit that is new to the tree but
+present in published history is still reported, with a note saying so.
+
+**It calibrates before it sweeps, and every failure exits differently.**
+Each run plants one positive control per enabled rule, sweeps them through
+the same code path the real corpus takes, and refuses to report CLEAN unless
+every plant was caught *and* a negative control of documented
+false-positive baits stayed silent. A corpus that could not be fully
+classified is `INCOMPLETE`, never `CLEAN`. This is a direct response to two
+instruments that printed a clean bill of health over real disclosures in one
+evening — an OCR arm that had never been calibrated, and a corpus classifier
+that matched 1 file of 185 and reported zero of everything. An uncalibrated
+scrubber is worse than no scrubber, because it turns "unmeasured" into
+"verified clean".
+
+**Scope.** This is the F1 arm only. Provenance and AI-thread vocabulary (F2)
+is excluded permanently: that pattern set is itself a disclosure, so it stays
+in the private sweep, and excluding it is what lets cc-scrub live in a public
+repo at all. Register, typography and commit trailers (F3) are not
+implemented — they are gated on two undecided policy questions. A CLEAN
+verdict is a lower bound over mechanical tells; the tool prints that,
+together with what it does not cover, on every run.
+
+Not yet wired into any hook, and not symlinked into `~/.claude/` by
+`configure.sh` — invoke it by path for now.

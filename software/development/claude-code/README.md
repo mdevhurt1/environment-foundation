@@ -210,7 +210,7 @@ the other option.
 
 - **session-start** — auto-runs via SessionStart hook. Verifies mode,
   surfaces vault context, declares goal.
-- **end-conversation** — run `/end` (or react to `CTX-WARN` in
+- **end-conversation** — run `/end-conversation` (or react to `CTX-WARN` in
   statusline). Walks the closing ritual: memory delta, spec/plan
   capture, transcript decision, vault sync, promotion candidates,
   worktree fold.
@@ -225,6 +225,24 @@ this module). Three rings + journal:
 - `40-journal/` — daily voice practice
 
 Promotion is always manual, weekly cadence. See `00-core/_rituals/weekly-review.md`.
+
+## Where canonical payload lives
+
+Three directories under `canonical/`, split by who invokes the file rather
+than by what language it is written in. INFRA-59 settled this before wiring
+made it expensive to move anything:
+
+| directory | invoked by | examples |
+|---|---|---|
+| `shell/` | the harness and the skills — sourced, or run as a helper | `cc-functions.sh`, `cc-plane-sync.sh`, `cc-outbound-guard.sh` |
+| `scripts/` | a person or a gate, by path, with its own CLI and exit-code contract | `cc-scrub.sh`, `cc-scrub-outbound.sh` |
+| `hooks/` | git | `pre-commit.sh`, `pre-push.sh`, `cc-scrub-hook-lib.sh` |
+
+The open question was whether `cc-scrub.sh` belonged in `shell/` with
+everything else, since it was the only file under `scripts/` when it landed.
+It stays: it is not a harness helper, it has a documented CLI and four
+distinct exit codes, and the outbound arm joined it there under INFRA-62, so
+`scripts/` is now a populated category rather than an exception of one.
 
 ## cc-scrub — disclosure scan (F1 arm)
 
@@ -245,6 +263,60 @@ bash canonical/scripts/cc-scrub.sh --path <dir>     # pre-submission
 bash canonical/scripts/cc-scrub.sh --calibrate-only # prove the instrument, sweep nothing
 bash canonical/scripts/cc-scrub.sh --report <file>  # TSV for a reviewing session
 ```
+
+`configure.sh` also deploys it as `~/.claude/cc-scrub`. The file keeps its
+`.sh` extension so the module-wide static gate still globs it; the deployed
+name drops it, because `cc-scrub` is what the docs and the operator call the
+tool.
+
+### Wired into git, not into memory (INFRA-59)
+
+The first two lines above are not suggestions. `configure.sh` installs them
+as hooks, so the sweep is mechanical:
+
+| hook | corpus | cc-scrub mode |
+|---|---|---|
+| `pre-commit` | the staged changes | `--staged` |
+| `pre-push` | each outgoing range, commit messages included | `--range <remote-sha>..<local-sha>` |
+
+**Why both.** They sweep different corpora and neither contains the other.
+`pre-commit` cannot see a commit *message*, because the message does not
+exist yet when it runs — and measured on this repository, an earlier hand
+scrub removed a LAN address from the tracked files and then quoted it four
+times in its own commit message. Push is also the moment the boundary is
+actually crossed: a local commit discloses nothing, and history rewritten
+before a push is free.
+
+**Only exit `0` clears.** `1` (blocking findings) and `2` (INCOMPLETE — the
+sweep could not prove itself) both refuse, as does a scrubber that cannot be
+found at all. A gate that fails open converts "unguarded" into "verified
+guarded", which is the one failure mode a gate may not have.
+
+**There is no override of its own.** git already provides `--no-verify` and
+cannot be stopped from honouring it, so a second bypass would only add a
+quieter one that leaves no trace in shell history. The refusal message names
+it; the house rule is that a commit or push made that way is a reportable
+event that belongs in the session report.
+
+**How they are deployed.** As symlinks from the repository's *common* hooks
+directory (`git rev-parse --git-path hooks`) into `canonical/hooks/`, which
+is how every other canonical asset ships. Two consequences worth knowing:
+editing `canonical/hooks/` edits the live gate rather than forking it, and
+one install from the main checkout arms every `cc-branch` worktree, because
+a linked worktree runs the common directory's hooks with its own root as
+cwd. Re-running `configure.sh` re-points the same two links and stacks
+nothing.
+
+`configure.sh` declines to install in three cases, each with a warning
+rather than a failure: the checkout is not a git repository; `core.hooksPath`
+points somewhere else (installing anyway would produce a hook git ignores,
+reported as installed); or the canonical hook file is missing. An operator's
+own pre-existing hook is moved to `<name>.backup-<timestamp>` beside itself
+— `.git/hooks` is untracked, so an overwrite there is unrecoverable.
+
+**Known gap:** `scripts/uninstall.sh` does not remove the hooks or the two
+scrubber links. Its `LINK_NAMES` list has drifted behind `configure.sh` by
+nine entries; see the INFRA-59 report.
 
 | rule | tier | what it matches |
 |---|---|---|
@@ -379,5 +451,9 @@ robust handling" and a plain "let me know if you want changes" are both
 baits that must not fire. Shipping a word list now would be the tool
 guessing at the operator's taste.
 
-Not wired into any hook, and not symlinked into `~/.claude/` by
-`configure.sh` — invoke it by path, the same as the F1 arm.
+**Deliberately not wired into a git hook.** `configure.sh` symlinks it to
+`~/.claude/cc-scrub-outbound` for convenience, but no hook calls it: its
+corpus is a staged outbound *package* (`.title` / `.body.md` / `.target`),
+which is not a git diff and not a commit range. There is no hook whose
+corpus it could sweep. Invoke it by path, or by its deployed name, before
+anything is posted — exit `0` is the only clearance.

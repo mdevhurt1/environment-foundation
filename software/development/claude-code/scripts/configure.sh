@@ -128,6 +128,73 @@ link "$CANONICAL/shell/cc-plane-sync.sh" "$CLAUDE_DIR/cc-plane-sync.sh"
 # have. doctor.sh check 12 is what notices.
 link "$CANONICAL/shell/cc-outbound-guard.sh" "$CLAUDE_DIR/cc-outbound-guard.sh"
 
+# Scrub arms. The files keep their .sh extension so the module-wide static
+# gate still globs them; the deployed names drop it, because `cc-scrub` is
+# what the operator and the docs call the tool (INFRA-59).
+# These links are also the hooks' fallback path when a checkout has moved.
+link "$CANONICAL/scripts/cc-scrub.sh"          "$CLAUDE_DIR/cc-scrub"
+link "$CANONICAL/scripts/cc-scrub-outbound.sh" "$CLAUDE_DIR/cc-scrub-outbound"
+
+# ---- git hooks: bind the scrub surfaces to the repository (INFRA-59) ----
+#
+# cc-scrub shipped with a measured pre-commit budget and was then bound to
+# nothing, so it ran only when somebody remembered. The hooks are deployed
+# the same way every other canonical asset is -- as symlinks, so editing
+# canonical/hooks/ edits the live gate rather than forking it.
+#
+# Written into the repository's COMMON hooks directory, which is what
+# `git rev-parse --git-path hooks` returns from any worktree. One install
+# from the main checkout therefore arms every cc-branch worktree too:
+# verified by probe, a linked worktree runs the common dir's hooks with its
+# own root as cwd.
+install_git_hooks() {
+    local hooks_dir configured name src dst stamp
+
+    if ! git -C "$REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
+        log_warn "$REPO_ROOT is not a git checkout — cc-scrub hooks skipped"
+        return 0
+    fi
+
+    # An operator who set core.hooksPath has told git the hooks live
+    # elsewhere. Installing into .git/hooks anyway would produce a hook git
+    # never runs and a configure.sh that reported it installed — a gate that
+    # is not there, reported as present, which is the worst outcome available.
+    configured=$(git -C "$REPO_ROOT" config --get core.hooksPath || true)
+    if [ -n "$configured" ]; then
+        log_warn "core.hooksPath is set to '$configured' — cc-scrub hooks NOT installed"
+        log_info "  git would ignore anything written to .git/hooks; install them there by hand"
+        return 0
+    fi
+
+    hooks_dir=$(git -C "$REPO_ROOT" rev-parse --git-path hooks)
+    case "$hooks_dir" in
+        /*) ;;
+        *) hooks_dir="$REPO_ROOT/$hooks_dir" ;;
+    esac
+    mkdir -p "$hooks_dir"
+
+    stamp=$(date +%Y%m%d-%H%M%S)
+    for name in pre-commit pre-push; do
+        src="$CANONICAL/hooks/$name.sh"
+        dst="$hooks_dir/$name"
+        if [ ! -f "$src" ]; then
+            log_warn "canonical hook missing: $src — $name not installed"
+            continue
+        fi
+        # A real file here is the operator's own hook. .git/hooks is
+        # untracked, so overwriting it is unrecoverable data loss; move it
+        # aside where they will find it rather than into ~/.claude, which is
+        # a different machine's concern.
+        if [ -e "$dst" ] && [ ! -L "$dst" ]; then
+            mv "$dst" "$dst.backup-$stamp"
+            log_warn "backed up hook $dst -> $dst.backup-$stamp"
+        fi
+        ln -sfn "$src" "$dst"
+        log_ok "installed git hook $name -> $src"
+    done
+}
+install_git_hooks
+
 # ---- ~/.bashrc source line (idempotent) ----
 SOURCE_LINE='[ -f ~/.claude/cc-functions.sh ] && source ~/.claude/cc-functions.sh'
 if ! grep -Fxq "$SOURCE_LINE" "$HOME/.bashrc" 2>/dev/null; then

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Description: Mutation check — breaks the shell subjects (cc-functions.sh, statusline-command.sh, doctor.sh, configure.sh, cc-plane-sync.sh) in known ways and asserts the test suite catches each one, so that a green run means something.
+# Description: Mutation check — breaks the shell subjects (cc-functions.sh, statusline-command.sh, doctor.sh, configure.sh, cc-plane-sync.sh, the outbound guard, the event emitter and the cc-scrub git hooks) in known ways and asserts the test suite catches each one, so that a green run means something.
 # Profiles:    workstation, workplace
 # Platforms:   ubuntu-24.04, ubuntu-22.04 (WSL supported)
 # Dependencies: bash 4+, jq, python3, coreutils, the tests in this directory
@@ -31,6 +31,8 @@ declare -A SUBJECTS=(
     [planesync]="$MODULE_DIR/canonical/shell/cc-plane-sync.sh"
     [guard]="$MODULE_DIR/canonical/shell/cc-outbound-guard.sh"
     [emit]="$MODULE_DIR/canonical/shell/cc-event-emit.sh"
+    [prehook]="$MODULE_DIR/canonical/hooks/pre-commit.sh"
+    [pushhook]="$MODULE_DIR/canonical/hooks/pre-push.sh"
 )
 declare -A SUBJECT_ENV=(
     [functions]=CC_FUNCTIONS_UNDER_TEST
@@ -40,6 +42,8 @@ declare -A SUBJECT_ENV=(
     [planesync]=PLANE_SYNC_UNDER_TEST
     [guard]=GUARD_UNDER_TEST
     [emit]=EMIT_UNDER_TEST
+    [prehook]=PRECOMMIT_UNDER_TEST
+    [pushhook]=PREPUSH_UNDER_TEST
 )
 
 # A test that has never been seen to fail proves nothing. Each mutation below
@@ -314,6 +318,96 @@ FROM
 : # link dropped
 TO
 )" configure
+
+# ---- the cc-scrub git hooks (INFRA-59) -----------------------------------
+#
+# The gate's failure modes are all silent: a hook that was never installed,
+# one git will never run, one that waves a commit through because it could
+# not find the scrubber. None of them produce an error message on the day
+# they matter, so each gets a mutation that reintroduces it.
+
+add_mut "the git hooks are never installed" test_git_hooks.sh \
+"$(cat <<'FROM'
+}
+install_git_hooks
+FROM
+)" "$(cat <<'TO'
+}
+: # hook install dropped
+TO
+)" configure
+
+# Installing into .git/hooks under a foreign core.hooksPath produces a hook
+# git ignores, reported as installed -- a gate that is not there.
+add_mut "a foreign core.hooksPath is installed over anyway" test_git_hooks.sh \
+"$(cat <<'FROM'
+    if [ -n "$configured" ]; then
+FROM
+)" "$(cat <<'TO'
+    if [ -n "$configured" ] && false; then
+TO
+)" configure
+
+# .git/hooks is untracked: an overwrite here is unrecoverable.
+add_mut "the operator's own hook is overwritten without a backup" test_git_hooks.sh \
+"$(cat <<'FROM'
+        if [ -e "$dst" ] && [ ! -L "$dst" ]; then
+FROM
+)" "$(cat <<'TO'
+        if [ -e "$dst" ] && [ ! -L "$dst" ] && false; then
+TO
+)" configure
+
+# The one failure mode a gate may not have.
+add_mut "a missing scrubber lets the commit through" test_git_hooks.sh \
+"$(cat <<'FROM'
+SCRUB=$(cc_hook_resolve_scrub "$0") || {
+    cc_hook_no_scrubber "$HOOK_NAME"
+    exit 1
+}
+FROM
+)" "$(cat <<'TO'
+SCRUB=$(cc_hook_resolve_scrub "$0") || exit 0
+TO
+)" prehook
+
+# INCOMPLETE (exit 2) means the sweep could not prove itself. Treating it as
+# clean is the false zero the whole toolchain is built to refuse.
+add_mut "an INCOMPLETE sweep counts as clean" test_git_hooks.sh \
+"$(cat <<'FROM'
+if [ "$RC" -eq 0 ]; then
+FROM
+)" "$(cat <<'TO'
+if [ "$RC" -ne 1 ]; then
+TO
+)" prehook
+
+# A push that creates a new ref has no far side to diff against. Sweeping
+# an empty range and calling it clean is worse than refusing.
+add_mut "an unboundable push range passes instead of refusing" test_git_hooks.sh \
+"$(cat <<'FROM'
+            FAILED=1
+            continue
+FROM
+)" "$(cat <<'TO'
+            continue
+TO
+)" pushhook
+
+# A deletion publishes nothing; scanning it produces a false refusal on an
+# ordinary cleanup.
+add_mut "a ref deletion is scanned like a normal push" test_git_hooks.sh \
+"$(cat <<'FROM'
+    if cc_hook_is_zero "${local_sha:-}"; then
+        continue
+    fi
+FROM
+)" "$(cat <<'TO'
+    if false; then
+        continue
+    fi
+TO
+)" pushhook
 
 # ---- cc-plane-sync.sh ----------------------------------------------------
 

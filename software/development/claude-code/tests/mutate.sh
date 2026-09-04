@@ -790,6 +790,19 @@ FROM
 TO
 )" guard
 
+# Revert the authority-terminator fix (INFRA-80): drop `?` and `#` from the
+# host-token character class, and the extractor runs `?`/`#` back into the token
+# where `s/^[^@]*@//` swaps the real host for a planted allowlisted one. This is
+# the whole of the bypass — `http://evil?@plane.homelab` reads as internal again.
+add_mut "host token stops terminating at ? and #" test_outbound_guard.sh \
+"$(cat <<'FROM'
+    grep -oE 'https?://[^ /?#]+' <<<"$1" \
+FROM
+)" "$(cat <<'TO'
+    grep -oE 'https?://[^ /]+' <<<"$1" \
+TO
+)" guard
+
 # ---- cc-event-emit.sh (INFRA-67) -----------------------------------------
 #
 # --body-file shipped untested in AI_ST-72/74. Silently ignoring the flag is

@@ -142,8 +142,27 @@ reason=""
 # dotted token is far more often a filename than a host, and treating every one
 # as a target would block `curl -d @body.json http://plane.homelab/…` on the
 # strength of `body.json`.
+#
+# The authority token must stop at every character RFC 3986 uses to END the
+# authority, or the userinfo strip below reads the WRONG host. RFC 3986 ends the
+# authority at `/` (path), `?` (query), `#` (fragment), or the end of input.
+# `[^ /]+` stopped only at `/` and whitespace, so `?` and `#` fell inside the
+# token — and then `s/^[^@]*@//` turned the exploit's own suffix into a host
+# swap (INFRA-80): a real client parses `http://evil.example?@plane.homelab` as
+# host=evil.example (the `?` opens a query), but this extractor grabbed
+# `evil.example?@plane.homelab` and the `@` strip left `plane.homelab`, an
+# allowlisted host that was never contacted. Measured 2026-09-04 against curl
+# 8.5.0 and python3 urllib: both resolve the `?@`/`#@` spellings to the host
+# BEFORE the delimiter, so terminating the token at `?` and `#` realigns the
+# guard with what actually gets dialled. Backslash needs no handling — curl and
+# urllib both read `evil\@plane.homelab` as userinfo `evil\` + host
+# plane.homelab, the same host this extractor derives, so guard and client
+# already agree; and a `\` with no `@` leaves a token that matches no internal
+# name and so fails closed as outbound. Stopping at `?`/`#` also fixes a latent
+# false BLOCK: a legitimate internal query URL (`http://plane.homelab/x?y=1`)
+# used to carry its query into the host token and miss the allowlist.
 url_targets() {
-    grep -oE 'https?://[^ /]+' <<<"$1" \
+    grep -oE 'https?://[^ /?#]+' <<<"$1" \
         | sed -e 's|https\?://||' -e 's/^[^@]*@//' -e 's/:[0-9]*$//' -e 's/\.$//'
 }
 

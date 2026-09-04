@@ -10,8 +10,10 @@ that the fix itself broke nothing.
 ```
 Subagent (general-purpose):
   description: "Re-review Task N fix round R"
-  model: [MODEL — REQUIRED: choose per SKILL.md Model Selection; an omitted
-         model silently inherits the session's most expensive one]
+  model: [MODEL — REQUIRED: choose per SKILL.md Model Selection. Never omit
+         it. An unset model takes Claude Code's Default, which is a MOVING
+         REFERENT resolving to the most capable model on the account — it
+         changes with no diff, no event and no line of output.]
   prompt: |
     You are re-reviewing one task's fix round. A previous review produced
     findings; an implementer has attempted to fix them. Your job is to

@@ -5,8 +5,10 @@ Use this template when dispatching an implementer subagent.
 ```
 Subagent (general-purpose):
   description: "Implement Task N: [task name]"
-  model: [MODEL — REQUIRED: choose per SKILL.md Model Selection; an omitted
-         model silently inherits the session's most expensive one]
+  model: [MODEL — REQUIRED: choose per SKILL.md Model Selection. Never omit
+         it. An unset model takes Claude Code's Default, which is a MOVING
+         REFERENT resolving to the most capable model on the account — it
+         changes with no diff, no event and no line of output.]
   prompt: |
     You are implementing Task N: [task name]
 
@@ -33,19 +35,43 @@ Subagent (general-purpose):
 
     Once you're clear on requirements:
     1. Implement exactly what the task specifies
-    2. Write tests (following TDD if task says to)
-    3. Verify implementation works
+    2. Write tests (following TDD if the task says to)
+    3. Verify the implementation works
     4. Commit your work
     5. Self-review (see below)
     6. Report back
 
     Work from: [directory]
 
+    ## Commits and TDD
+
+    **Strict red-green where the task produces code.** Write the failing
+    test, run it, watch it go RED against the current code, then write the
+    minimal code to reach GREEN. A test written after the fix proves nothing
+    about what the fix changed, so a RED you did not watch is not evidence.
+
+    **One commit per task, and one commit per bug** — even when several
+    fixes touch the same file. Every commit must be independently
+    bisectable: `git checkout -q <sha>` and the suite passes without the
+    commits that follow it. A combined commit destroys that property.
+
+    Issues that are real but outside this task become items in your report,
+    never TODO comments in the code.
+
     **While you work:** If you encounter something unexpected or unclear, **ask questions**.
     It's always OK to pause and clarify. Don't guess or make assumptions.
 
     While iterating, run the focused test for what you're changing; run the
-    full suite once before committing, not after every edit.
+    full suite once before committing, not after every edit. Record the
+    suite's totals before and after your change — a summary line like
+    `N assertions passed across M file(s)` is the evidence, not "tests
+    pass".
+
+    Before you believe a failure, check the host: `uptime` and
+    `ps -eo pid,pcpu,etimes,comm --sort=-pcpu | head`. A leftover process
+    from an earlier probe has made a healthy stack look broken here before,
+    and a failure whose identity moves between runs is almost always
+    environmental, not a defect.
 
     ## You Do Not Dispatch Subagents
 

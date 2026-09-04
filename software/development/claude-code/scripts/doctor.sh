@@ -683,6 +683,46 @@ if [ -r "$HOME/.claude.json" ]; then
     fi
 fi
 
+# ---- 12. Outbound posting gate is live ----
+#
+# CEO standing rule 2026-09-04: agents stage swept drafts, the CEO posts. The
+# hook that enforces it fails OPEN in every way it can break -- an unregistered
+# matcher, a dangling symlink, a non-executable file all mean "no gate" and
+# none of them announce themselves. A gate whose absence is silent is worth
+# nothing, so its presence is checked here rather than assumed.
+#
+# The last check is the load-bearing one: it feeds the guard a real posting
+# command and requires a refusal. Registration and executability can both be
+# perfect while the matching logic lets everything through.
+heading "Outbound posting gate"
+GUARD_LINK="$CLAUDE_DIR/cc-outbound-guard.sh"
+if [ ! -e "$GUARD_LINK" ]; then
+    fail "$GUARD_LINK missing — agents can post publicly; run scripts/configure.sh"
+elif [ ! -x "$GUARD_LINK" ]; then
+    fail "$GUARD_LINK is not executable — the hook cannot run, so it fails OPEN"
+else
+    ok "cc-outbound-guard.sh linked and executable"
+fi
+
+if jq -e '[.hooks.PreToolUse[]? | select(.matcher == "Bash")
+           | .hooks[]? | select(.command | test("cc-outbound-guard"))] | length > 0' \
+       "$CLAUDE_DIR/settings.json" >/dev/null 2>&1; then
+    ok "PreToolUse Bash matcher registers cc-outbound-guard.sh"
+else
+    fail "settings.json has no PreToolUse Bash hook for cc-outbound-guard.sh"
+fi
+
+if [ -x "$GUARD_LINK" ]; then
+    probe='{"tool_name":"Bash","tool_input":{"command":"gh issue create --title x"}}'
+    guard_rc=0
+    printf '%s' "$probe" | "$GUARD_LINK" >/dev/null 2>&1 || guard_rc=$?
+    if [ "$guard_rc" -eq 2 ]; then
+        ok "guard refuses a live posting command (exit 2)"
+    else
+        fail "guard did NOT refuse 'gh issue create' — the gate is not enforcing"
+    fi
+fi
+
 # ---- summary ----
 heading "Summary"
 printf 'OK: %d  WARN: %d  FAIL: %d\n' "$OK" "$WARN" "$FAIL"

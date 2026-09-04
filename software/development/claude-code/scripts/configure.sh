@@ -120,6 +120,14 @@ link "$CANONICAL/shell/cc-memory-index-regen.sh" "$CLAUDE_DIR/cc-memory-index-re
 # link line, leaving the three skills on their skills/../shell/ fallback path.
 link "$CANONICAL/shell/cc-plane-sync.sh" "$CLAUDE_DIR/cc-plane-sync.sh"
 
+# PreToolUse gate for the CEO's 2026-09-04 standing rule: agents stage swept
+# drafts, the CEO posts. Registered in settings.json as a Bash matcher, so it
+# must be linked under $CLAUDE_DIR by the same name the hook command uses.
+# Without this link the hook command silently does not exist, and a missing
+# hook script fails OPEN -- which is the one failure mode this gate cannot
+# have. doctor.sh check 12 is what notices.
+link "$CANONICAL/shell/cc-outbound-guard.sh" "$CLAUDE_DIR/cc-outbound-guard.sh"
+
 # ---- ~/.bashrc source line (idempotent) ----
 SOURCE_LINE='[ -f ~/.claude/cc-functions.sh ] && source ~/.claude/cc-functions.sh'
 if ! grep -Fxq "$SOURCE_LINE" "$HOME/.bashrc" 2>/dev/null; then

@@ -90,6 +90,24 @@ surface from its verifier.) This includes the bookends' own Plane sync —
 skip `cc-plane-sync.sh start`/`finish` for this session's issue; state the
 board text as a recommendation only.
 
+## Outbound discipline
+
+The CEO posts. You draft. Every public-facing PR, issue, comment or forum
+post goes out **manually, by the CEO** — never by you, no matter how well
+reviewed the text is or whether the CEO already approved its content
+(publication under their name is identity-bearing and irreversible; GitHub
+keeps edit history visible). Your deliverable is a staged, swept,
+ready-to-paste draft in `<task folder>/outbound/`: one `.title`, one
+`.body.md`, one `.target` file, plus the duplicate/prior-art search you ran
+recorded in the draft. Sweep the body for **both** classes before handing it
+over — F1 disclosure (IPs, home directories, session ids) and AI register
+(em-dashes, curly quotes, AI-isms) — then hand off one line: `ready to post:
+<path> -> <target URL>`. Pushing a branch to the CEO's own fork or to
+internal Gitea is **not** posting and needs no special handling. The
+`cc-outbound-guard` PreToolUse hook enforces this and has no override; if you
+hit it, you were about to do the wrong thing — stage the draft and say so in
+your report.
+
 ## Escalation / completion protocol
 
 Emit events with the stamping helper — never write event files by hand

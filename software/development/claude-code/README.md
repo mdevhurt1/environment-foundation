@@ -300,3 +300,84 @@ together with what it does not cover, on every run.
 
 Not yet wired into any hook, and not symlinked into `~/.claude/` by
 `configure.sh` — invoke it by path for now.
+
+## cc-scrub-outbound — outbound PR/issue text (register + delegated F1)
+
+`canonical/scripts/cc-scrub-outbound.sh` sweeps a **staged outbound
+package** — the `.title` / `.body.md` / `.target` triple for a PR, issue or
+comment — before any of it is posted. Outbound text is the third scrub
+surface: tracked files were always covered, commit messages were added
+under RESEARCH-1, and this is the one that leaks under the operator's own
+account on somebody else's repository.
+
+It reports both risk classes. The register and typography rules are this
+tool's own; the four F1 disclosure rules are **delegated to `cc-scrub.sh`**
+as a subprocess, so those range-checked patterns keep living in exactly one
+file.
+
+```bash
+bash canonical/scripts/cc-scrub-outbound.sh <dir>          # a package directory
+bash canonical/scripts/cc-scrub-outbound.sh a.title a.body.md   # explicit files
+bash canonical/scripts/cc-scrub-outbound.sh --calibrate-only    # prove the instrument
+bash canonical/scripts/cc-scrub-outbound.sh <dir> --report <f>  # TSV for a reviewing session
+```
+
+| rule | tier | what it matches |
+|---|---|---|
+| `em-dash` | BLOCK | U+2014 |
+| `curly-quote` | BLOCK | U+2018 U+2019 U+201C U+201D |
+| `session-id-bare` | BLOCK | a bare 22-hex session identifier |
+| `ai-trailer` | BLOCK | an assistant co-author trailer or session URL |
+| `nbsp` | ADVISORY | U+00A0 U+202F |
+| `ellipsis` | ADVISORY | U+2026 |
+| `en-dash` | ADVISORY | U+2013 flanked by spaces, standing in for an em dash |
+
+Plus `rfc1918-host`, `home-path`, `session-id` and `homelab-host` from the
+F1 arm, reported under their own names. Exit codes match cc-scrub's: `0`
+clean, `1` blocking, `2` **INCOMPLETE**, `3` usage.
+
+**Why a sibling tool and not a flag on cc-scrub.** cc-scrub parks the
+register class on an undecided policy question and warns that shipping it
+early "would block 81% of this repo's text files on a taste call".
+Measured on this checkout: 86 files in this module alone carry an em-dash,
+this README among them. The CEO ruling that made em-dashes blocking applies
+to **outbound drafts only** and says nothing about repo prose. A separate
+tool whose corpus is an outbound package cannot be pointed at the tracked
+tree by accident; a mode flag could be, and `cc-scrub --audit` would start
+failing on this file the day the rules landed inside it. The scope
+restriction is structural, which is the only kind that survives.
+
+**It calibrates itself and its delegate.** Seven plants, one per rule,
+swept through the same code path the real corpus takes, against twelve
+baits drawn from constructions a legitimate draft is supposed to use — the
+ASCII hyphen, `--staged`, three ASCII dots, a 40-hex sha, a co-author
+trailer naming a human. A delegate that is missing, or that fails its own
+calibration, makes the whole run INCOMPLETE: an empty finding list from a
+tool that never ran is not a clean F1 sweep.
+
+**Patterns are UTF-8 byte sequences matched under `LC_ALL=C`.** `grep -P
+'\x{2014}'` means the *character* U+2014 only while PCRE is in UTF mode,
+which GNU grep enables from the locale; under a C locale the same pattern
+means byte `0x14` and matches nothing. That failure is invisible and
+locale-dependent, so the patterns are bytes and the locale is pinned.
+
+**A package with no `.body.md` is INCOMPLETE, not clean.** The false zero
+specific to this surface is sweeping the outbound folder, getting CLEAN,
+and posting a body that was never in the folder. A stem carrying a
+`.title` or a `.target` without a body is exactly that state. A body with
+no target is fine — that is a comment draft, and a target is not posted
+text. The gate applies to directory sweeps; an explicit file list is the
+operator naming what they want swept.
+
+**Scope.** Lexical AI-isms — register vocabulary and sentence-shape tells —
+are deliberately **not** implemented, and every run says so. The F2
+provenance vocabulary stays out of this public repo permanently on
+cc-scrub's reasoning. The generic register vocabulary has no measured
+precision here, and cc-scrub's own negative control already records review
+verdicts against the obvious candidates: "comprehensive test coverage and
+robust handling" and a plain "let me know if you want changes" are both
+baits that must not fire. Shipping a word list now would be the tool
+guessing at the operator's taste.
+
+Not wired into any hook, and not symlinked into `~/.claude/` by
+`configure.sh` — invoke it by path, the same as the F1 arm.

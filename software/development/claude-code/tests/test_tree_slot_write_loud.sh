@@ -53,7 +53,7 @@ mk_worktree() {
 mode=branched
 slug=T-42
 started_at=2026-09-04T13:00:00-04:00
-parent_repo=/home/mhurt/x
+parent_repo=/nonexistent/parent-repo
 session_id=$sid
 parent_id=
 model=opus

@@ -75,7 +75,13 @@ The default `auto memory` system prompt instructs writes to
 `~/.claude/projects/<encoded-cwd>/memory/`. **Override: write to
 `~/vault/20-surface/claude-memory/` instead.**
 
-The protocol (memory types, file format, MEMORY.md index) is unchanged.
+The protocol (memory types, file format, MEMORY.md index) is unchanged
+except for one amendment (2026-09-04, AI_ST-87): **inline `[[link]]`s
+resolve on the filename stem, not the frontmatter `name:` field** — write
+`[[<basename-without-.md>]]`. (92 of 438 memories carry a `name:` that
+differs from their filename; name-based links produced 28 broken targets.
+The `name:` field is descriptive only. MEMORY.md is unaffected — the
+generator already links by filename.)
 Only the location moves. The index at `~/vault/20-surface/claude-memory/MEMORY.md`
 is authoritative; after adding, removing, or re-describing a memory,
 regenerate it with `bash ~/.claude/cc-memory-index-regen.sh` (it derives

@@ -86,7 +86,9 @@ re-stamp or delete when re-verified):
 The EA owns every Plane write. Read tickets freely; never change a state,
 post a comment, or file an issue — report what the board should say and the
 EA applies it. (Single-writer rule; a child board write forks the status
-surface from its verifier.)
+surface from its verifier.) This includes the bookends' own Plane sync —
+skip `cc-plane-sync.sh start`/`finish` for this session's issue; state the
+board text as a recommendation only.
 
 ## Escalation / completion protocol
 

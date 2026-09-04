@@ -6,6 +6,8 @@
       "Bash(test:*)",
       "Bash(command:*)",
       "Bash(scp:*)",
+      "Bash(bash ~/.claude/cc-tree-slot-write.sh*)",
+      "Bash(bash ~/.claude/cc-tree-slot-update.sh*)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
       "Bash(git log:*)",

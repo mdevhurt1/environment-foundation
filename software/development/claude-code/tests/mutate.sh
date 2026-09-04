@@ -362,6 +362,247 @@ FROM
 TO
 )" planesync
 
+# ---- __cc_write_sandbox_settings (INFRA-54) ------------------------------
+
+# The sibling-leak. A blanket "company/tasks" grant is the one edit that turns
+# a per-session carveout into write access to every other task's spec, plan
+# and report -- and it LOOKS more permissive-in-a-good-way, not less safe,
+# which is exactly why it needs a test standing over it.
+add_mut "the task carveout becomes a blanket tasks/ grant" test_sandbox_settings.sh \
+"$(cat <<'FROM'
+            task_entry=",\"~/vault/20-surface/company/tasks/$task_id\""
+FROM
+)" "$(cat <<'TO'
+            task_entry=",\"~/vault/20-surface/company/tasks\""
+TO
+)"
+
+# The id validation is a security boundary: the value is interpolated into a
+# JSON string AND a mkdir path, and cc-continue reads it back out of a file a
+# human can edit. Widening the pattern admits path traversal.
+add_mut "the task-id validation admits anything" test_sandbox_settings.sh \
+"$(cat <<'FROM'
+        if [[ "$task_id" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+FROM
+)" "$(cat <<'TO'
+        if [[ "$task_id" =~ ^.*$ ]]; then
+TO
+)"
+
+# --settings REPLACES the sandbox object wholesale, so a dropped base entry is
+# not inherited back from settings.json -- it is gone for the session, with no
+# symptom until a bookend cannot write its own transcript.
+add_mut "a base vault carveout is dropped from the fragment" test_sandbox_settings.sh \
+"$(cat <<'FROM'
+"~/vault/20-surface/claude-memory","~/vault/20-surface/claude-transcripts"
+FROM
+)" "$(cat <<'TO'
+"~/vault/20-surface/claude-memory"
+TO
+)"
+
+# An allowWrite entry for a directory that does not exist is INERT -- creating
+# it would be a write to tasks/, which stays denied. Drop the launcher-side
+# mkdir and the carveout still READS correct while granting nothing usable.
+add_mut "the task folder is no longer created by the launcher" test_sandbox_settings.sh \
+"$(cat <<'FROM'
+            mkdir -p "$HOME/vault/20-surface/company/tasks/$task_id" 2>/dev/null \
+FROM
+)" "$(cat <<'TO'
+            true "$HOME/vault/20-surface/company/tasks/$task_id" 2>/dev/null \
+TO
+)"
+
+# ---- __cc_find_sandbox_settings ------------------------------------------
+
+# Stop the upward walk after one level. cc-continue regenerates the fragment
+# AT THE PATH THIS WALK RETURNS, so a session launched from a subdirectory
+# strands a second fragment there and keeps resuming under the stale one.
+add_mut "the sandbox-fragment walk stops after one level" test_sandbox_settings.sh \
+"$(cat <<'FROM'
+            printf '%s\n' "$dir/.cc-sandbox-settings.json"
+            return 0
+        fi
+        dir=$(dirname "$dir")
+FROM
+)" "$(cat <<'TO'
+            printf '%s\n' "$dir/.cc-sandbox-settings.json"
+            return 0
+        fi
+        dir=/
+TO
+)"
+
+# ---- __cc_trust_effective / __cc_trust_register --------------------------
+
+# The git-root boundary is the whole reason pre-registration is needed. Remove
+# it and trust inherits from $HOME, so every brand-new worktree reads as
+# already-trusted, the register short-circuits, and the unattended child sits
+# on the trust dialog forever -- with nothing on screen to say why.
+add_mut "trust inherits past the enclosing git root" test_trust.sh \
+"$(cat <<'FROM'
+        [ -n "$root" ] && [ "$node" = "$root" ] && return 1
+FROM
+)" "$(cat <<'TO'
+        [ -z "$root" ] && [ "$node" = "$root" ] && return 1
+TO
+)"
+
+# Replace instead of merge. ~/.claude.json is rewritten by every running claude
+# process; dropping the keys claude put in a project entry destroys live
+# session state, which the source calls out as the unrecoverable failure.
+add_mut "registering replaces a project entry instead of merging it" test_trust.sh \
+"$(cat <<'FROM'
+.projects[$p] = ((.projects[$p] // {}) + {hasTrustDialogAccepted: true})
+FROM
+)" "$(cat <<'TO'
+.projects[$p] = {hasTrustDialogAccepted: true}
+TO
+)"
+
+# "Does nothing at all when trust is already effective" is what keeps this
+# extra writer off a contended file in the steady state -- every launch after
+# the first in a worktree. Drop the short-circuit and every spawn rewrites it.
+add_mut "an already-trusted directory is rewritten anyway" test_trust.sh \
+"$(cat <<'FROM'
+    __cc_trust_effective "$dir" && return 0
+FROM
+)" "$(cat <<'TO'
+    __cc_trust_effective "$dir" && true
+TO
+)"
+
+# claude looks the workspace up by its PHYSICAL path. Registering the spelling
+# the caller happened to use writes a key nothing ever matches: trust that
+# reads as applied, and a dialog that still blocks the child.
+add_mut "the trust key is not resolved to a physical path" test_trust.sh \
+"$(cat <<'FROM'
+    dir=$(cd "$1" 2>/dev/null && pwd -P) || {
+FROM
+)" "$(cat <<'TO'
+    dir=$(printf '%s' "$1") || {
+TO
+)"
+
+# ---- launch-string renderers / policy discovery / identity ---------------
+
+# %q is the ONLY thing standing between a policy value and command injection
+# into a tmux window the operator never typed in: cc and cc-branch build a
+# command STRING, so whatever these print gets re-parsed by a shell.
+add_mut "the model flag fragment stops shell-quoting" test_launch_flags.sh \
+"$(cat <<'FROM'
+    printf ' %q' "${__cc_model_args[@]}"
+FROM
+)" "$(cat <<'TO'
+    printf ' %s' "${__cc_model_args[@]}"
+TO
+)"
+
+add_mut "the perm flag fragment stops shell-quoting" test_launch_flags.sh \
+"$(cat <<'FROM'
+    printf ' %q' "${__cc_perm_args[@]}"
+FROM
+)" "$(cat <<'TO'
+    printf ' %s' "${__cc_perm_args[@]}"
+TO
+)"
+
+# The static fallback is reached only when --help cannot be read. Dropping a
+# mode from it makes __cc_perm_stage refuse a value the installed claude
+# accepts -- on exactly the machines where the probe already failed.
+add_mut "the fallback mode list loses bypassPermissions" test_launch_flags.sh \
+"$(cat <<'FROM'
+        printf '%s\n' "acceptEdits auto bypassPermissions manual dontAsk plan"
+FROM
+)" "$(cat <<'TO'
+        printf '%s\n' "acceptEdits auto manual dontAsk plan"
+TO
+)"
+
+# A typo'd $CC_MODEL_POLICY must refuse, not fall through to ~/.claude: the
+# session would run under a policy nobody pointed at, and say nothing.
+add_mut "a missing CC_MODEL_POLICY falls through instead of refusing" test_launch_flags.sh \
+"$(cat <<'FROM'
+        [ -f "$CC_MODEL_POLICY" ] || return 1
+FROM
+)" "$(cat <<'TO'
+        [ -f "$CC_MODEL_POLICY" ] || CC_MODEL_POLICY="$HOME/.claude/model-policy.json"
+TO
+)"
+
+# The session id names the tree slot, stamps every event and is asserted
+# against by cc-plane-sync. A short id does not fail loudly -- it fragments
+# the topology into orphan slots that no parent ever matches.
+add_mut "the session id is minted at the wrong width" test_launch_flags.sh \
+"$(cat <<'FROM'
+        uuidgen | tr -d '-' | head -c 22
+FROM
+)" "$(cat <<'TO'
+        uuidgen | tr -d '-' | head -c 16
+TO
+)"
+
+# ---- dispatch and never-fatal guards -------------------------------------
+
+# Every helper returns its VALUE on stdout and its prose on stderr, because
+# callers do `spec=$(__cc_resolve_model r)`. Send a log line to stdout and it
+# is captured and parsed as data -- a model id of "[cc] model: opus".
+add_mut "__cc_log writes its prose to stdout" test_dispatch_guards.sh \
+"$(cat <<'FROM'
+    printf '%s[cc] %s%s\n' "$(__cc_color_or_plain $'\033[01;36m')" "$*" "$(__cc_color_or_plain $'\033[00m')" >&2
+FROM
+)" "$(cat <<'TO'
+    printf '%s[cc] %s%s\n' "$(__cc_color_or_plain $'\033[01;36m')" "$*" "$(__cc_color_or_plain $'\033[00m')"
+TO
+)"
+
+# __cc_die's non-zero status is load-bearing: refusal branches end on it, and
+# a zero return turns every loud refusal into a silent continue.
+add_mut "__cc_die returns success" test_dispatch_guards.sh \
+"$(cat <<'FROM'
+    printf '%s[cc] %s%s\n' "$(__cc_color_or_plain $'\033[01;31m')" "$*" "$(__cc_color_or_plain $'\033[00m')" >&2
+    return 1
+FROM
+)" "$(cat <<'TO'
+    printf '%s[cc] %s%s\n' "$(__cc_color_or_plain $'\033[01;31m')" "$*" "$(__cc_color_or_plain $'\033[00m')" >&2
+    return 0
+TO
+)"
+
+# The action trail is best-effort by design. Let a broken logger's status
+# escape and an unrelated bookkeeping failure aborts a good spawn.
+add_mut "a failing action-trail logger becomes fatal" test_dispatch_guards.sh \
+"$(cat <<'FROM'
+    bash "$h" "$@" >/dev/null 2>&1 || true
+FROM
+)" "$(cat <<'TO'
+    bash "$h" "$@" >/dev/null 2>&1
+TO
+)"
+
+# A dangling $CC_EA_LOG_SH must fall through to the next route rather than be
+# selected: the trail would point at nothing and log nowhere, silently.
+add_mut "a dangling EA-log override is selected anyway" test_dispatch_guards.sh \
+"$(cat <<'FROM'
+        [ -n "$p" ] && [ -f "$p" ] && { printf '%s' "$p"; return 0; }
+FROM
+)" "$(cat <<'TO'
+        [ -n "$p" ] && { printf '%s' "$p"; return 0; }
+TO
+)"
+
+# cc-land's own precondition. Without it the delegator runs `bash <missing>`,
+# which exits 127 with bash's error instead of the named refusal -- the EA
+# reads an unexplained status where a "run configure.sh" instruction belongs.
+add_mut "cc-land stops checking that its script exists" test_dispatch_guards.sh \
+"$(cat <<'FROM'
+    if [ ! -f "$s" ]; then
+FROM
+)" "$(cat <<'TO'
+    if false; then
+TO
+)"
+
 # ---- entry points (cc-functions.sh) --------------------------------------
 
 # The half-spawn, resurrected: a model refusal in cc-explore no longer
@@ -391,7 +632,7 @@ TO
 WORK=$(mktemp -d) || exit 2
 trap 'rm -rf "$WORK"' EXIT
 
-caught=0 survived=0 stale=0
+caught=0 survived=0 stale=0 errored=0
 
 printf 'Mutation check over %d subject(s):\n' "${#SUBJECTS[@]}"
 for s in "${!SUBJECTS[@]}"; do printf '  %s\n' "${SUBJECTS[$s]}"; done
@@ -441,18 +682,45 @@ PY
         stale=$((stale + 1)); continue
     fi
 
-    out=$(env "$subject_env=$mutant" \
-          -u CC_MODEL -u CC_MODEL_POLICY -u CC_PERM_MODE \
+    # ORDER MATTERS, and it silently did not for the first 24 mutations in this
+    # table. GNU env stops parsing options at the FIRST NAME=VALUE assignment,
+    # so `env FOO=bar -u BAZ cmd` runs the command "-u" and exits 127 -- the
+    # test file never ran. rc was non-zero, so every mutation was reported
+    # CAUGHT while proving nothing, which is the exact failure this script
+    # exists to prevent, committed inside the script itself. The -u flags now
+    # precede the assignment (INFRA-55).
+    out=$(env -u CC_MODEL -u CC_MODEL_POLICY -u CC_PERM_MODE \
+          "$subject_env=$mutant" \
           bash "$SCRIPT_DIR/$testfile" 2>&1)
     rc=$?
+    nfail=$(printf '%s\n' "$out" | grep -c '^not ok')
 
-    if [ "$rc" -ne 0 ]; then
+    # A non-zero rc is NOT sufficient evidence of a catch. A test file that
+    # dies before it can assert -- a missing dependency, an unbound variable,
+    # a harness invocation error -- also exits non-zero, and counting that as
+    # CAUGHT is how this table spent its whole life green without running.
+    # A catch requires a TAP plan (the file reached its end) AND at least one
+    # failed assertion (it reached the end by asserting, not by dying).
+    if ! printf '%s\n' "$out" | grep -qE '^1\.\.[0-9]+'; then
+        log_error "ERRORED  $label"
+        printf '         %s produced no TAP plan (rc=%s) -- it died rather than asserted.\n' \
+            "$testfile" "$rc"
+        printf '         This is a BROKEN CHECK, not a caught mutation.\n'
+        printf '%s\n' "$out" | head -3 | sed 's/^/           /'
+        errored=$((errored + 1)); continue
+    fi
+
+    if [ "$rc" -ne 0 ] && [ "$nfail" -gt 0 ]; then
         log_ok "CAUGHT   $label"
-        printf '         %s failed %s assertion(s), first:\n' \
-            "$testfile" "$(printf '%s\n' "$out" | grep -c '^not ok')"
+        printf '         %s failed %s assertion(s), first:\n' "$testfile" "$nfail"
         printf '%s\n' "$out" | grep -m1 '^not ok' | sed 's/^/           /'
         printf '%s\n' "$out" | grep -A2 -m1 '^not ok' | grep '^#' | sed 's/^/           /'
         caught=$((caught + 1))
+    elif [ "$rc" -ne 0 ]; then
+        log_error "ERRORED  $label"
+        printf '         %s exited %s with a TAP plan but zero failed assertions.\n' \
+            "$testfile" "$rc"
+        errored=$((errored + 1))
     else
         log_error "SURVIVED $label"
         printf '         %s passed against a mutant that should have broken it.\n' "$testfile"
@@ -462,9 +730,9 @@ PY
 done
 
 echo
-printf 'mutations: %d   caught: %d  survived: %d  stale: %d\n' \
-    "${#M_LABEL[@]}" "$caught" "$survived" "$stale"
-if [ "$survived" -eq 0 ] && [ "$stale" -eq 0 ]; then
+printf 'mutations: %d   caught: %d  survived: %d  stale: %d  errored: %d\n' \
+    "${#M_LABEL[@]}" "$caught" "$survived" "$stale" "$errored"
+if [ "$survived" -eq 0 ] && [ "$stale" -eq 0 ] && [ "$errored" -eq 0 ]; then
     log_ok "every mutation was caught — the suite bites."
     exit 0
 fi

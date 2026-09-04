@@ -1,115 +1,125 @@
 # Condition-Based Waiting
 
-## Overview
+Flaky tests and flaky orchestration both come from the same move: guessing how
+long something takes instead of watching for the thing itself. A guess passes
+on an idle machine and fails under load, in CI, or on a box where an earlier
+probe is still burning a core.
 
-Flaky tests often guess at timing with arbitrary delays. This creates race conditions where tests pass on fast machines but fail under load or in CI.
+**Core principle:** wait for the actual condition you care about, and pin the
+condition to the thing you are waiting on — not to a proxy that something else
+can also produce.
 
-**Core principle:** Wait for the actual condition you care about, not a guess about how long it takes.
+## When to use
 
-## When to Use
+- a test or script contains `sleep`, `time.sleep()`, or a fixed timeout
+- a test passes alone and fails in the full suite, or fails only under load
+- you are waiting for a process, a file, a service, or a child session
+- a wait "succeeded" but the thing it waited for had not finished
 
-```dot
-digraph when_to_use {
-    "Test uses setTimeout/sleep?" [shape=diamond];
-    "Testing timing behavior?" [shape=diamond];
-    "Document WHY timeout needed" [shape=box];
-    "Use condition-based waiting" [shape=box];
+**Don't use when** you are testing timing behavior itself (a debounce, a
+retry backoff, a rate limit). Then the delay *is* the subject — and you write
+down why the number is what it is.
 
-    "Test uses setTimeout/sleep?" -> "Testing timing behavior?" [label="yes"];
-    "Testing timing behavior?" -> "Document WHY timeout needed" [label="yes"];
-    "Testing timing behavior?" -> "Use condition-based waiting" [label="no"];
+## The failure this exists to prevent
+
+On 2026-08-08 a background waiter polled a multi-package `colcon test` log
+with:
+
+```bash
+grep -qE "tests passed|tests failed"     # ❌ proxy, not the thing
+```
+
+It matched **package 2 of 3's** summary line and exited early. `colcon
+test-result` then ran mid-flight and reported "did not generate a result file"
+for tests that went on to pass. It was reported as a failure. It was not one.
+
+The log string was an artifact that an *earlier stage* could also emit. The
+condition that actually mattered was "the test process is gone":
+
+```bash
+until ! pgrep -f "colcon test" >/dev/null; do sleep 1; done   # ✅ the thing itself
+```
+
+## Core patterns
+
+Wrap the polling once and reuse it:
+
+```bash
+# wait_for <timeout-seconds> <description> <command...>
+wait_for() {
+    local timeout=$1 desc=$2; shift 2
+    local deadline=$(( SECONDS + timeout ))
+    until "$@"; do
+        [ "$SECONDS" -lt "$deadline" ] || {
+            echo "timed out after ${timeout}s waiting for: ${desc}" >&2
+            return 1
+        }
+        sleep 0.2
+    done
 }
 ```
 
-**Use when:**
-- Tests have arbitrary delays (`setTimeout`, `sleep`, `time.sleep()`)
-- Tests are flaky (pass sometimes, fail under load)
-- Tests timeout when run in parallel
-- Waiting for async operations to complete
+| Waiting for | Condition |
+|---|---|
+| a process to finish | `wait_for 300 "suite exit" bash -c '! pgrep -f "run-tests.sh"'` |
+| a file to appear | `wait_for 30 "report" test -s "$report"` |
+| a port to accept | `wait_for 60 "plane" nc -z plane.homelab 80` |
+| a service to be healthy | `wait_for 120 "api" curl -fsS -m 5 "$url/health"` |
+| a count to be reached | `wait_for 60 "5 events" bash -c '[ "$(ls "$d" | wc -l)" -ge 5 ]'` |
+| a child session's progress | `wait_for 600 "a commit" bash -c '[ "$(git -C "$wt" rev-list --count main..HEAD)" -gt 0 ]'` |
 
-**Don't use when:**
-- Testing actual timing behavior (debounce, throttle intervals)
-- Always document WHY if using arbitrary timeout
+Three rules the table encodes:
 
-## Core Pattern
+1. **Every wait has a timeout, and the timeout message names what was
+   awaited.** A hang that says "timed out" and nothing else costs the next
+   debugging session an hour.
+2. **A failed wait is a failure, not a fall-through.** Return non-zero; do not
+   let the caller proceed as if the condition held.
+3. **Poll the thing, not its shadow.** Process exit over log text; file size
+   over file existence; a fetched value over a status string somebody else
+   writes.
 
-```typescript
-// ❌ BEFORE: Guessing at timing
-await new Promise(r => setTimeout(r, 50));
-const result = getResult();
-expect(result).toBeDefined();
+## What is not a condition
 
-// ✅ AFTER: Waiting for condition
-await waitFor(() => getResult() !== undefined);
-const result = getResult();
-expect(result).toBeDefined();
-```
+**A pane is not a condition.** A wedged Claude TUI and a healthy idle one are
+indistinguishable in `capture-pane`, and the statusline context % goes stale
+too. Two Sentinel branches burned roughly 8.6 session-hours looking perfectly
+healthy. Check progress on the **filesystem** — task-folder mtime, and
+`git rev-list --count main..HEAD` — never the pane
+(`feedback_verify_branch_liveness_by_filesystem`).
 
-## Quick Patterns
+The pane is still useful for the opposite question: it is a *positive*
+detector for a blocking artefact an idle-but-healthy session would not render
+— a trust dialog, a numbered menu, `Unknown command: /end`. **Presence of a
+pane signal is informative; absence is not.**
 
-| Scenario | Pattern |
-|----------|---------|
-| Wait for event | `waitFor(() => events.find(e => e.type === 'DONE'))` |
-| Wait for state | `waitFor(() => machine.state === 'ready')` |
-| Wait for count | `waitFor(() => items.length >= 5)` |
-| Wait for file | `waitFor(() => fs.existsSync(path))` |
-| Complex condition | `waitFor(() => obj.ready && obj.value > 10)` |
+**A dead session is not a dead process.** `tmux kill-session` kills the
+session, not what is running inside it. One leftover probe ran at 100% CPU for
+26 minutes after its session was "cleaned up". Kill by pattern
+(`pkill -f <distinctive-args>`) and then verify none remain — that
+verification is itself a condition-based wait.
 
-## Implementation
+## Waiting on dispatched work
 
-Generic polling function:
-```typescript
-async function waitFor<T>(
-  condition: () => T | undefined | null | false,
-  description: string,
-  timeoutMs = 5000
-): Promise<T> {
-  const startTime = Date.now();
+Two failure modes, opposite in shape:
 
-  while (true) {
-    const result = condition();
-    if (result) return result;
+- **Never poll a wait interface with short timeouts.** It burns turns and
+  context to learn nothing.
+- **Never sit in one silent, open-ended wait either.** A child that dies
+  quietly is then discovered at the end of the session instead of in minutes.
 
-    if (Date.now() - startTime > timeoutMs) {
-      throw new Error(`Timeout waiting for ${description} after ${timeoutMs}ms`);
-    }
+So: while you have local work — notes, packaging the next review, reading
+reports — keep working; results arrive on their own. When genuinely idle, wait
+in **bounded stretches** (five to ten minutes where the platform allows), and
+between stretches post one line of status and reconcile your live children:
+list them, and chase any that finished without reporting.
 
-    await new Promise(r => setTimeout(r, 10)); // Poll every 10ms
-  }
-}
-```
+A bounded stretch keeps nearly all of a long wait's efficiency while
+guaranteeing a stuck child is noticed within minutes.
 
-See `condition-based-waiting-example.ts` in this directory for complete implementation with domain-specific helpers (`waitForEvent`, `waitForEventCount`, `waitForEventMatch`) from actual debugging session.
+## Before you trust the result
 
-## Common Mistakes
-
-**❌ Polling too fast:** `setTimeout(check, 1)` - wastes CPU
-**✅ Fix:** Poll every 10ms
-
-**❌ No timeout:** Loop forever if condition never met
-**✅ Fix:** Always include timeout with clear error
-
-**❌ Stale data:** Cache state before loop
-**✅ Fix:** Call getter inside loop for fresh data
-
-## When Arbitrary Timeout IS Correct
-
-```typescript
-// Tool ticks every 100ms - need 2 ticks to verify partial output
-await waitForEvent(manager, 'TOOL_STARTED'); // First: wait for condition
-await new Promise(r => setTimeout(r, 200));   // Then: wait for timed behavior
-// 200ms = 2 ticks at 100ms intervals - documented and justified
-```
-
-**Requirements:**
-1. First wait for triggering condition
-2. Based on known timing (not guessing)
-3. Comment explaining WHY
-
-## Real-World Impact
-
-From debugging session (2025-10-03):
-- Fixed 15 flaky tests across 3 files
-- Pass rate: 60% → 100%
-- Execution time: 40% faster
-- No more race conditions
+A wait that returned is not proof the work succeeded — only that the condition
+you wrote became true. Ask whether the condition could have been satisfied by
+something other than success. If it could, that is the bug, and it is the same
+bug as the `colcon` grep.

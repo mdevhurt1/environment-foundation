@@ -99,10 +99,13 @@ new_repo() {
     cp "$CONFIGURE_UNDER_TEST"                            "$mod/scripts/configure.sh"
     cp "$MODULE_DIR/canonical/scripts/cc-scrub.sh"        "$mod/canonical/scripts/cc-scrub.sh"
     cp "$MODULE_DIR/canonical/scripts/cc-scrub-outbound.sh" "$mod/canonical/scripts/cc-scrub-outbound.sh"
-    cp "$PRECOMMIT_UNDER_TEST"                            "$mod/canonical/hooks/pre-commit.sh"
-    cp "$PREPUSH_UNDER_TEST"                              "$mod/canonical/hooks/pre-push.sh"
-    cp "$MODULE_DIR/canonical/hooks/cc-scrub-hook-lib.sh" "$mod/canonical/hooks/cc-scrub-hook-lib.sh"
-    chmod +x "$mod/canonical/hooks/pre-commit.sh" "$mod/canonical/hooks/pre-push.sh"
+    # -p, and no chmod: git treats a NON-EXECUTABLE hook as absent and says
+    # nothing about it. Repairing the mode on the way into the fixture would
+    # hide exactly that failure, so the fixture inherits whatever the
+    # canonical file actually carries.
+    cp -p "$PRECOMMIT_UNDER_TEST"                            "$mod/canonical/hooks/pre-commit.sh"
+    cp -p "$PREPUSH_UNDER_TEST"                              "$mod/canonical/hooks/pre-push.sh"
+    cp -p "$MODULE_DIR/canonical/hooks/cc-scrub-hook-lib.sh" "$mod/canonical/hooks/cc-scrub-hook-lib.sh"
 
     git -C "$repo" init -q -b main
     git -C "$repo" config user.email "fixture@invalid"
@@ -430,6 +433,15 @@ assert_contains "...and pointing at the deliberate sweep" "--audit" "$out"
 # A copy would drift. Prove the deployed hook resolves to the file under
 # canonical/, so editing canonical is editing the live gate.
 # =========================================================================
+
+# The exec bit must be in the git INDEX, not just in this working tree. A
+# fresh clone of a 100644 hook gives git a file it silently declines to run:
+# no error, no warning, and a repository the operator believes is guarded.
+for h in pre-commit pre-push; do
+    mode=$(git -C "$REPO_ROOT" ls-files -s -- \
+        "software/development/claude-code/canonical/hooks/$h.sh" 2>/dev/null | awk '{print $1}')
+    assert_eq "canonical/hooks/$h.sh is mode 100755 in the git index" "100755" "$mode"
+done
 
 real=$(readlink -f "$HD6/pre-push")
 assert_eq "the deployed pre-push resolves to the canonical file" \

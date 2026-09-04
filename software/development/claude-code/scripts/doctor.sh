@@ -723,6 +723,138 @@ if [ -x "$GUARD_LINK" ]; then
     fi
 fi
 
+# ---- 11. Session tree presence: open windows vs the tree ----
+heading "Session tree presence"
+# On 2026-09-04 a dispatched child (aabd7e4c460747558046f2) ran a full
+# lifecycle from an open tmux window with NO slot file and NO spawned event.
+# Every downstream consumer -- the company-status scan, the reclaim gate, the
+# parent's child list -- keys off the slot, so all three looked straight
+# through a session that was visibly sitting there in a window. Nothing on the
+# box could answer "is that window something the tree knows about?", and so
+# nothing noticed for four hours (INFRA-68).
+#
+# The slot write is model-executed (session-start Step 3). No hardening inside
+# cc-tree-slot-write.sh can catch the case where the script is never invoked at
+# all, which is exactly what happened. This check is the detector for that
+# class: it compares two INDEPENDENT sources of truth -- the tmux window list
+# and the tree -- and reports where they disagree. Neither is derived from the
+# other, which is the whole point; a check that reads the artifact it is
+# checking certifies whatever it finds (same principle as the symlink check).
+#
+# Severity is split deliberately, per the INFRA-47 lesson that a check which
+# cries wolf trains the repo's only red instrument into ignorability:
+#   window with NO slot           -> FAIL  the incident: a live session that
+#                                          no part of the tree can see.
+#   window whose slot is terminal -> WARN  normal and frequent: a finished
+#                                          child queued for EA reclaim.
+#   running slot, window gone     -> WARN  hygiene the other way, bounded by a
+#                                          threshold so a session that is
+#                                          merely between windows is spared.
+TREE_SESSIONS="$HOME/vault/20-surface/company/tree/sessions"
+CC_TMUX_SESSION="${CC_DOCTOR_TMUX_SESSION:-company}"
+# Hours a running slot may sit with no window before it is called stale. Two
+# hours is generous: a windowless running slot is already anomalous, and any
+# session whose window is still open is exempt regardless of age.
+STALE_SLOT_HOURS="${CC_DOCTOR_STALE_SLOT_HOURS:-2}"
+
+# Resolve the session id a worktree declares, by walking up for .cc-mode the
+# same way the slot writer does.
+window_session_id() {
+    local d="$1"
+    while [ -n "$d" ] && [ "$d" != "/" ]; do
+        if [ -f "$d/.cc-mode" ]; then
+            grep '^session_id=' "$d/.cc-mode" | cut -d= -f2- | tr -d '\n'
+            return 0
+        fi
+        d=$(dirname "$d")
+    done
+    return 1
+}
+
+if [ ! -d "$TREE_SESSIONS" ]; then
+    warn "no tree at $TREE_SESSIONS — skipping session/window reconciliation"
+elif ! command -v tmux >/dev/null 2>&1; then
+    warn "tmux not installed — cannot reconcile open windows against the tree"
+elif ! tmux has-session -t "$CC_TMUX_SESSION" 2>/dev/null; then
+    ok "no '$CC_TMUX_SESSION' tmux session — no open windows to reconcile"
+else
+    win_list=$(tmux list-windows -t "$CC_TMUX_SESSION" \
+                   -F '#{window_name}	#{pane_current_path}' 2>/dev/null)
+    live_ids=""      # session ids that currently hold a window
+    healthy=0
+    while IFS=$'\t' read -r wname wpath; do
+        [ -n "$wname" ] || continue
+        wsid=$(window_session_id "$wpath") || wsid=""
+
+        # The command-center window is the EA itself, not a dispatched child,
+        # and is exempt from the child checks below. It is NOT exempt from
+        # registering its session id: skipping the whole iteration reported the
+        # EA's own still-running slot as windowless on every healthy box, which
+        # is the "cries wolf" failure this check was written to avoid.
+        if [ "$wname" = "cc" ]; then
+            [ -n "$wsid" ] && live_ids="$live_ids $wsid"
+            continue
+        fi
+
+        if [ -z "$wsid" ]; then
+            fail "tmux window '$wname' has no .cc-mode — no session identity at all"
+            printf '       worktree: %s\n' "$wpath"
+            printf '       a half-run cc-branch leaves exactly this: a window and a\n'
+            printf '       worktree with no identity, invisible to every tree consumer.\n'
+            continue
+        fi
+
+        live_ids="$live_ids $wsid"
+        slot="$TREE_SESSIONS/$wsid.md"
+        if [ ! -f "$slot" ]; then
+            fail "tmux window '$wname' maps to NO tree slot — the session is invisible"
+            printf '       session:  %s\n' "$wsid"
+            printf '       worktree: %s\n' "$wpath"
+            printf '       slot:     %s (missing)\n' "$slot"
+            printf '       fix: from that worktree, run\n'
+            printf '         bash ~/.claude/cc-tree-slot-write.sh --session-id %s\n' "$wsid"
+            continue
+        fi
+
+        slot_status=$(grep -m1 '^status:' "$slot" | sed 's/^status:[[:space:]]*//')
+        case "$slot_status" in
+            running|"")
+                healthy=$((healthy+1)) ;;
+            *)
+                warn "tmux window '$wname' is held by a session that already closed (status=$slot_status)"
+                printf '       worktree: %s\n' "$wpath"
+                printf '       the window blocks cc-branch from reusing this task_id;\n'
+                printf '       reclaim it via the company-status skill.\n' ;;
+        esac
+    done <<< "$win_list"
+
+    [ "$healthy" -gt 0 ] && ok "$healthy open window(s) map to a live tree slot"
+
+    # Reverse direction: a slot still claiming to run whose window is gone.
+    # Only meaningful when the window list was actually readable, so it lives
+    # inside this else-branch -- on a box with no company session every running
+    # slot would look windowless.
+    stale_found=0
+    now_s=$(date +%s)
+    for slot in "$TREE_SESSIONS"/*.md; do
+        [ -f "$slot" ] || continue
+        slot_status=$(grep -m1 '^status:' "$slot" | sed 's/^status:[[:space:]]*//')
+        [ "$slot_status" = "running" ] || continue
+        sid=$(basename "$slot" .md)
+        case " $live_ids " in *" $sid "*) continue ;; esac
+        age_h=$(( (now_s - $(stat -c %Y "$slot")) / 3600 ))
+        [ "$age_h" -ge "$STALE_SLOT_HOURS" ] || continue
+        if [ "$stale_found" -eq 0 ]; then
+            warn "tree slot(s) still marked running with no open window (>= ${STALE_SLOT_HOURS}h):"
+            stale_found=1
+        fi
+        printf '       %s  slug=%s  age=%sh\n' "$sid" \
+            "$(grep -m1 '^slug:' "$slot" | sed 's/^slug:[[:space:]]*//')" "$age_h"
+    done
+    [ "$stale_found" -eq 1 ] && \
+        printf '       these never closed out: either the session died or its\n       end-conversation never ran. Close them via the tree, not by hand.\n'
+fi
+
 # ---- summary ----
 heading "Summary"
 printf 'OK: %d  WARN: %d  FAIL: %d\n' "$OK" "$WARN" "$FAIL"

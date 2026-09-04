@@ -79,7 +79,30 @@ alone, which is what makes them CI-able.
 | `test_configure.sh` | `configure.sh` against a scaffold + sandbox HOME: full link set (incl. `cc-plane-sync.sh`, INFRA-46) and exit 0 on a clean idempotent re-run (INFRA-51). |
 | `test_plane_sync.sh` | `cc-plane-sync.sh`: usage refusals, identity precedence, the warn-and-exit-0 network contract, and the HTTP flows against a loopback fake Plane. |
 | `test_entry_points.sh` | The seven public `cc-*` entry points: refusals that must leave nothing behind, and spawn flows against claude/tmux shims (the half-spawn surface). |
-| `mutate.sh` | Breaks the five subjects (`cc-functions.sh`, `statusline-command.sh`, `doctor.sh`, `configure.sh`, `cc-plane-sync.sh`) twenty-four ways on throwaway copies and asserts each break is caught. |
+| `test_deliver_brief.sh` | `__cc_deliver_brief` and its pane predicates: the paste-verify-Enter dance, and the refusal to send a blind Enter into an unverified pane. |
+| `test_land_child.sh` | `cc-land-child.sh`: the four landing gates, the close-stall diagnosis and `--nudge`, and that nothing ever pushes. |
+| `test_event_emit.sh` | `cc-event-emit.sh`: event stamping, naming and dedupe. |
+| `test_tree_slot_events.sh` | The tree-slot writers route every event through `cc-event-emit.sh`. |
+| `test_ea_log.sh` | `cc-ea-log.sh`: the EA action trail writer (AI_ST-73). |
+| `test_brainstorming_event.sh` | The brainstorming skill's event contract. |
+| `test_doctor_sigpipe.sh` | `doctor.sh` survives SIGPIPE in its own pipelines (INFRA-46). |
+| `test_sandbox_settings.sh` | `__cc_write_sandbox_settings` / `__cc_find_sandbox_settings`: the six base carveouts, the per-session task-folder entry and its scoping, task-id rejection (traversal, command substitution), and the nearest-wins upward walk (INFRA-54/55). |
+| `test_trust.sh` | `__cc_trust_effective` / `__cc_trust_register`: the git-root boundary that makes pre-registration necessary, and the never-fatal, never-clobbering `~/.claude.json` rewrite (INFRA-55). |
+| `test_launch_flags.sh` | `__cc_model_flag_str` / `__cc_perm_flag_str` (`%q` as the defence against injection into the tmux launch *string*), `__cc_perm_modes`, `__cc_model_policy_path` precedence, and `__cc_mint_session_id` shape (INFRA-55). |
+| `test_dispatch_guards.sh` | Stream discipline (`__cc_die` / `__cc_log` on stderr), `__cc_ea_log_helper_path` precedence, the `__cc_ea_log_safe` never-fatal-never-noisy contract, the `cc-land` delegator, and the `__cc_*` snapshot guard (INFRA-55). |
+| `mutate.sh` | Breaks the five subjects (`cc-functions.sh`, `statusline-command.sh`, `doctor.sh`, `configure.sh`, `cc-plane-sync.sh`) forty-three ways on throwaway copies and asserts each break is caught. |
+
+### `mutate.sh` reports ERRORED as well as SURVIVED
+
+A mutation is only CAUGHT if the named test file emitted a TAP plan **and**
+failed at least one assertion. A test file that dies before it can assert also
+exits non-zero, and counting that as a catch is how this table spent its whole
+life green without ever running a test: the `env` invocation placed the
+`SUBJECT_UNDER_TEST=` assignment *before* the `-u` flags, and GNU `env` stops
+parsing options at the first `NAME=VALUE`, so it ran a command literally named
+`-u` and exited 127 every time (found and fixed under INFRA-55). Every
+mutation's diagnostic read `failed 0 assertion(s)`, which was the visible tell.
+`ERRORED` now names that class distinctly, and fails the run.
 
 ## The `.cc-mode` quoting contract
 

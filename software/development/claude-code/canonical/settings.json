@@ -6,7 +6,6 @@
       "Bash(test:*)",
       "Bash(command:*)",
       "Bash(scp:*)",
-      "Bash(curl:*)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
       "Bash(git log:*)",
@@ -46,7 +45,21 @@
       "Bash(gh alias set:*)",
       "Bash(gh secret set:*)",
       "Bash(gh workflow run:*)",
-      "mcp__github"
+      "mcp__github",
+      "mcp__plugin_github_github",
+      "mcp__claude_ai_Gmail__send_message",
+      "mcp__claude_ai_Gmail__reply",
+      "mcp__claude_ai_Gmail__forward",
+      "mcp__claude_ai_Google_Drive__share_file",
+      "mcp__claude_ai_Atlassian__createJiraIssue",
+      "mcp__claude_ai_Atlassian__addCommentToJiraIssue",
+      "mcp__claude_ai_Atlassian__createConfluencePage",
+      "mcp__claude_ai_Atlassian__updateConfluencePage",
+      "mcp__claude_ai_Atlassian__createConfluenceFooterComment",
+      "mcp__claude_ai_Atlassian__createConfluenceInlineComment",
+      "mcp__claude_ai_Google_Calendar__create_event",
+      "mcp__claude_ai_Google_Calendar__update_event",
+      "mcp__claude_ai_Monarch"
     ],
     "defaultMode": "auto"
   },
@@ -100,7 +113,7 @@
     "playwright@claude-plugins-official": true,
     "feature-dev@claude-plugins-official": true,
     "claude-md-management@claude-plugins-official": true,
-    "github@claude-plugins-official": true
+    "github@claude-plugins-official": false
   },
   "sandbox": {
     "network": {

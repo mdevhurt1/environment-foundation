@@ -237,6 +237,42 @@ raw_http_write() {
     return 1
 }
 
+# scripted_http_write -- true when interpreter code on the command line
+# carries an EXPLICIT HTTP-write shape whose visible targets are not all
+# internal (INFRA-86; the interpreter analogue of INFRA-67's curl inversion).
+#
+# The shapes are tighter than the legacy github branch's loose substrings, on
+# purpose. `put` matches inside `--input`, `requests\.` matches a read, and
+# `fetch(` alone is a GET — loose matching is only safe while scoped to one
+# hostname, and this function is not. Each alternative here names a write
+# unambiguously:
+#
+#   .post(/.put(/.patch(/.delete(     library method calls (requests, axios…)
+#   ->post( …                         perl/php arrow calls (LWP, Guzzle)
+#   method= / method: naming a verb   fetch options, urllib Request(method=…)
+#   request(POST …                    http.client / requests.request
+#   urlopen( together with data=      urlopen only writes when it has a body
+#
+# The `\\?` in the method/request patterns tolerates the backslash that quote
+# stripping leaves behind: `{method: \"POST\"}` normalises to `method: \post\`.
+# The arrow pattern spells its dash as `[-]` because `has` hands the pattern to
+# grep as its first word, and a pattern starting with `-` reads as an option.
+#
+# The host test is outbound_target, same as the curl branch, and its fail-
+# closed clause is load-bearing here: an explicit write call whose URL lives
+# in a variable or an environment lookup names no host this guard can check,
+# and is refused rather than guessed at — the `curl -K` stance. Reads stay
+# untouched: a call with none of these shapes never reaches the host test.
+scripted_http_write() {
+    { has '\.(post|put|patch|delete)\(' \
+      || has '[-]>(post|put|patch|delete)\(' \
+      || has '\bmethod ?[:=] ?\\?(post|put|patch|delete)\b' \
+      || has 'request\( ?\\?(post|put|patch|delete)\b' \
+      || { has '\burlopen\(' && has '\bdata='; }
+    } || return 1
+    outbound_target "$n"
+}
+
 # --- gh: the verbs that publish -----------------------------------------
 #
 # The allowed side of each pair is the one the daily loop runs constantly:
@@ -282,6 +318,17 @@ elif raw_http_write; then
 # does. The other red-team evasions (variable indirection, base64, write-then-
 # run) all require deciding to defeat the gate; this one only requires wanting
 # to finish the task, which is precisely the failure this gate exists for.
+#
+# Two branches since INFRA-86. The general one matches explicit write shapes
+# against the internal allowlist — a scripted POST to a webhook or pastebin is
+# the same act as the curl spelling the raw-HTTP branch refuses, and until
+# INFRA-86 it walked through because only github.com was matched here. The
+# legacy github branch is kept beneath it with its original loose substrings:
+# they catch sloppier github spellings than the explicit shapes do, they are
+# safe only while scoped to that one host, and keeping them means this change
+# strictly widens what is refused.
+elif has "${B}(python3?|node|perl|ruby|php) " && scripted_http_write; then
+    reason="interpreter code making an HTTP write to a host outside the internal allowlist (or one it never names)"
 elif has "${B}(python3?|node|perl|ruby|php) " \
      && has 'github\.com' \
      && has '(post|put|patch|delete|urlopen|requests\.|http\.client|fetch\()'; then

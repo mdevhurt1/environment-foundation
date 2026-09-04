@@ -24,8 +24,13 @@
 # ~/vault/20-surface/claude-memory/feedback_tree_slot_helpers_resolve_from_cwd.md
 #
 # No-op (exit 0 with a WARN) if no .cc-mode is found or it lacks session_id —
-# this covers older sessions predating Phase 1 and bare launches. Exits non-zero
-# only on a refused mismatch or a usage error, both before any write.
+# this covers older sessions predating Phase 1 and bare launches. Those are
+# expected states, not faults, and must stay quiet-and-zero: making every early
+# return fatal would break every non-wrapper launch on the box.
+#
+# Exit codes: 2 usage error, 3 refused session-id mismatch (both before any
+# write), 4 the slot could not be written after a retry (INFRA-68). A genuine
+# write failure is an ERROR, never a WARN — see the write block below for why.
 
 set -euo pipefail
 
@@ -190,10 +195,32 @@ if [ -f "$slot" ]; then
     fi
 fi
 
-mkdir -p "$(dirname "$slot")"
-mkdir -p "${slot%.md}.events"
+# The slot is this session's ONLY presence in the tree: the company-status
+# scan, the reclaim gate and the parent's child list all key off this one
+# file. A session that fails to write it runs its whole lifecycle invisible --
+# which is precisely what happened to aabd7e4c460747558046f2 on 2026-09-04
+# (INFRA-68). So this write does not get to fail quietly.
+#
+# Three properties, in order of how much each one was missing before:
+#   1. VERIFIED. The success line is printed only after the slot is read back
+#      non-empty, never merely because `cat` returned -- the success message is
+#      bound to the operation it claims
+#      (feedback_bind_the_success_message_to_the_operation).
+#   2. RETRIED, ONCE. The realistic transient here is the vault tree being
+#      momentarily absent or busy, not a permission fault. The bound is 2
+#      attempts by construction, not by a timeout: a retry loop that outlives
+#      the fault it was written for is a worse bug than the one it fixes.
+#   3. LOUD. A final failure is an ERROR on stderr that names the session, the
+#      path, and what has been LOST -- not a WARN. The 2026-09-04 incident
+#      survived a close-time WARN that was read, understood as by-design, and
+#      scrolled past; a message that does not state its consequence gets
+#      triaged as noise.
+events_dir="${slot%.md}.events"
 
-cat > "$slot" <<EOF
+write_slot_attempt() {
+    mkdir -p "$(dirname "$slot")" || return 1
+    mkdir -p "$events_dir" || return 1
+    cat > "$slot" <<EOF
 ---
 session_id: $session_id
 parent_id: $parent_id
@@ -214,6 +241,30 @@ model_source: $model_source
 Started: $started_at
 Mode: $mode
 EOF
+}
+
+# Condition context, so `set -e` does not abort the script inside the helper --
+# a failed attempt must reach the retry, not kill the shell.
+slot_written=0
+for attempt in 1 2; do
+    if write_slot_attempt && [ -s "$slot" ]; then
+        slot_written=1
+        break
+    fi
+    [ "$attempt" -eq 1 ] && \
+        echo "WARN: tree slot write failed — retrying once before giving up" >&2
+done
+
+if [ "$slot_written" -ne 1 ]; then
+    echo "ERROR: could not write the tree slot for session $session_id" >&2
+    echo "       slot: $slot" >&2
+    echo "       Both attempts failed. Until this file exists the session is" >&2
+    echo "       INVISIBLE to the company-status scan, to the reclaim gate and" >&2
+    echo "       to its parent's child list — it will run to completion with" >&2
+    echo "       nobody able to see it. Fix the path above, then re-run:" >&2
+    echo "         bash ~/.claude/cc-tree-slot-write.sh" >&2
+    exit 4
+fi
 
 # Say out loud whose slot this is. When identity came from the cwd walk this
 # line is the only thing standing between a moved cwd and another lane's slot,

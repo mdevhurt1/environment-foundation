@@ -803,6 +803,46 @@ FROM
 TO
 )" guard
 
+# Re-scope the generalized interpreter branch (INFRA-86) back to github.com:
+# swap its allowlist host test for the literal-hostname match it replaced. The
+# three github detour assertions still pass — the loose legacy branch catches
+# them — so only the §4e external-host assertions stand between this revert
+# and a silent return to the single-forge-host scope INFRA-86 exists to close.
+add_mut "interpreter branch matches one forge host again" test_outbound_guard.sh \
+"$(cat <<'FROM'
+    outbound_target "$n"
+FROM
+)" "$(cat <<'TO'
+    has 'github\.com'
+TO
+)" guard
+
+# Fail OPEN instead of closed when interpreter code names no URL at all: gate
+# the host test on a URL being present. An explicit write call whose target
+# lives in a variable or an environment lookup then passes uninspected — the
+# exact unparseable-target shape the curl -K stance exists to refuse.
+add_mut "an unseen interpreter target passes uninspected" test_outbound_guard.sh \
+"$(cat <<'FROM'
+    outbound_target "$n"
+FROM
+)" "$(cat <<'TO'
+    { url_targets "$n" | grep -q . && outbound_target "$n"; }
+TO
+)" guard
+
+# Drop the method-option write shape. `fetch(url, {method: "POST"})` carries
+# its verb nowhere else, so node's posting spelling to a non-github host goes
+# quiet; the github spelling stays caught by the legacy branch, which is why
+# only the §4e non-github fetch assertion can see this alternative at all.
+add_mut "the method-option write shape is dropped" test_outbound_guard.sh \
+"$(cat <<'FROM'
+      || has '\bmethod ?[:=] ?\\?(post|put|patch|delete)\b' \
+FROM
+)" "$(cat <<'TO'
+      || false \
+TO
+)" guard
+
 # ---- cc-event-emit.sh (INFRA-67) -----------------------------------------
 #
 # --body-file shipped untested in AI_ST-72/74. Silently ignoring the flag is

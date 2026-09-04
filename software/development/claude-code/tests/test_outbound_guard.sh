@@ -270,6 +270,15 @@ assert_allowed "internal POST carrying a query string" \
     'curl -X POST "http://plane.homelab/api/v1/issues/?expand=state" -d @b.json'
 assert_allowed "internal GET carrying a fragment" \
     'curl -sS http://plane.homelab/docs/page#section'
+# The pathless query/fragment shapes are the ones the OLD extractor actually
+# mis-refused: with no `/` before the `?`/`#`, the delimiter and its tail rode
+# into the host token, missed the allowlist, and the internal request was
+# BLOCKED. These two fail against the pre-fix `[^ /]+` and pass after it —
+# proof the narrowing fixes a latent false refusal, not only the bypass.
+assert_allowed "internal POST, query with no path" \
+    'curl -X POST http://plane.homelab?probe=1 -d x'
+assert_allowed "internal POST, fragment with no path" \
+    'curl -X POST http://plane.homelab#top -d x'
 
 # --- 4c. the internal paths must stay open -------------------------------
 #

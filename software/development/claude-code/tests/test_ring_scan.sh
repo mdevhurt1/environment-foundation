@@ -382,4 +382,91 @@ t_run env HOME="$NV" bash "$SCAN_UNDER_TEST"
 assert_eq "a missing vault still exits 2" "2" "$T_RC"
 assert_contains "  ... and says so" "vault not mounted" "$T_ERR"
 
+# =========================================================================
+# 9. THE EMIT TAIL  (INFRA-88)
+#
+# The 2026-09-05 pass read as "the emitter drops report.canon_leak and
+# ## anomalies". The emitter was innocent: the EA's capture pipeline
+# (`scan 2>&1 | tee file | head -100`) truncated the tail — head exited,
+# tee died of SIGPIPE, the scanner died of SIGPIPE mid-emit, and head's
+# exit 0 hid all of it. These tests pin the two sections' behaviour so the
+# "emitter drops them" hypothesis stays refuted, and section 10 covers the
+# real defect: a truncated report was indistinguishable from a complete one.
+# =========================================================================
+
+# canon leak: a file under a protected ring newer than the last-run marker
+# is reported, ring-relative, with its mtime.
+CK=$(mk_vault) || exit 1
+mk_mem "$CK" alpha "first memory"
+mk_index "$CK" alpha
+CK_MARKER="$CK/vault/20-surface/company/_command-center/state/.ring-maintenance-last-run"
+touch -d '3 days ago' "$CK_MARKER"
+printf 'core edit\n'    > "$CK/vault/00-core/core-note.md"
+printf 'canon edit\n'   > "$CK/vault/10-middle/canon-note.md"
+printf 'journal edit\n' > "$CK/vault/40-journal/journal-note.md"
+printf 'old canon\n'    > "$CK/vault/10-middle/untouched-note.md"
+touch -d '10 days ago' "$CK/vault/10-middle/untouched-note.md"
+
+t_run env HOME="$CK" bash "$SCAN_UNDER_TEST"
+leak_rows=$(section "$T_OUT" report.canon_leak)
+assert_contains "a 00-core file newer than the marker is a canon leak" \
+    "00-core/core-note.md" "$leak_rows"
+assert_contains "a 10-middle file newer than the marker is a canon leak" \
+    "10-middle/canon-note.md" "$leak_rows"
+assert_contains "a 40-journal file newer than the marker is a canon leak" \
+    "40-journal/journal-note.md" "$leak_rows"
+assert_contains "  ... each row carries a tab-separated mtime" \
+    "$(printf '10-middle/canon-note.md\t')" "$leak_rows"
+assert_not_contains "a file older than the marker is not a leak" \
+    "untouched-note.md" "$leak_rows"
+
+# anomalies: a missing marker is the documented baseline anomaly, and it must
+# actually reach the report — this is the scanner's self-report channel.
+AN=$(mk_vault) || exit 1
+mk_mem "$AN" alpha "first memory"
+mk_index "$AN" alpha
+t_run env HOME="$AN" bash "$SCAN_UNDER_TEST"
+anom_rows=$(section "$T_OUT" anomalies)
+assert_contains "a missing last-run marker is reported in ## anomalies" \
+    "no last-run marker" "$anom_rows"
+
+# The terminator. A report is complete IFF its last line is "## end"; without
+# it, the 2026-09-05 truncation was undetectable — 11 sections look exactly
+# like a scan that had nothing to say in the last two.
+assert_eq "a complete report ends with the ## end terminator" \
+    "## end" "$(printf '%s\n' "$T_OUT" | tail -1)"
+assert_eq "  ... and carries all 13 sections plus the terminator" \
+    "14" "$(printf '%s\n' "$T_OUT" | grep -c '^## ')"
+
+# =========================================================================
+# 10. TRUNCATION IS DETECTABLE AND SIGPIPE IS LOUD  (INFRA-88)
+# =========================================================================
+
+# The incident invocation, verbatim shape: the tee'd "full copy" is NOT a
+# full copy once a downstream head exits. The saved file must be detectably
+# incomplete — no terminator — rather than a plausible-looking report.
+TH=$(mk_vault) || exit 1
+mk_mem "$TH" alpha "first memory"
+mk_index "$TH" alpha
+env HOME="$TH" bash -c 'bash "$0" 2>&1 | tee "$1" | head -3 >/dev/null' \
+    "$SCAN_UNDER_TEST" "$TH/saved.txt"
+saved=$(cat "$TH/saved.txt" 2>/dev/null || true)
+assert_not_contains "a head-truncated capture lacks the terminator" \
+    "## end" "$saved"
+assert_not_contains "  ... so the missing canon-leak section is detectable" \
+    "## report.canon_leak" "$saved"
+
+# A consumer that vanishes must produce a LOUD death with a dedicated status,
+# not the default silent 141. stderr is kept separate here, as a correct
+# invocation would keep it.
+SD=$(mk_vault) || exit 1
+mk_mem "$SD" alpha "first memory"
+mk_index "$SD" alpha
+sig_rc=$(env HOME="$SD" bash -c 'bash "$0" 2>"$1" | :; echo "${PIPESTATUS[0]}"' \
+    "$SCAN_UNDER_TEST" "$SD/err.txt")
+assert_eq "a scan whose consumer vanished exits with the dedicated status 4" \
+    "4" "$sig_rc"
+assert_contains "  ... and says TRUNCATED on stderr" \
+    "TRUNCATED" "$(cat "$SD/err.txt" 2>/dev/null || true)"
+
 t_finish

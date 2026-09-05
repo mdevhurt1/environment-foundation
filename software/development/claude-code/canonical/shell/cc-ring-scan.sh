@@ -12,13 +12,31 @@
 # Exit 2 if the vault is not mounted. Exit 3 if the index-sync self-consistency
 # guard trips (INFRA-78) — an impossible metric combination, which means this
 # scanner and MEMORY.md disagree about format and no AUTO action may be
-# trusted. Otherwise exit 0 even when findings exist; findings are data, not
-# errors.
+# trusted. Exit 4 if the stdout consumer closes the pipe mid-report (INFRA-88)
+# — whatever was captured is truncated and must be discarded. Otherwise exit 0
+# even when findings exist; findings are data, not errors.
+#
+# The report ends with a bare "## end" line. That is a TERMINATOR, not a 14th
+# section: a capture whose last line is not "## end" is truncated, however
+# complete it looks. On 2026-09-05 the report was consumed through
+# `... | tee file | head -100`; head exited, tee died of SIGPIPE, this script
+# died of SIGPIPE mid-emit, and head's exit 0 hid all of it — the truncated
+# file read as a scan that "dropped" its last two sections, one of which is
+# the canon-leak safety check.
 #
 # Progress is traced to stderr, one line per section; stdout carries only the
 # report.
 
 set -euo pipefail
+
+# A consumer that exits early kills this script with SIGPIPE on its next
+# write, and the default disposition is a SILENT death — the shape of the
+# 2026-09-05 incident (INFRA-88). Make it loud: reset the disposition first
+# so the failure message cannot recurse into a second SIGPIPE when stderr is
+# merged into the same dead pipe, then exit with the dedicated status. The
+# handler is a trap, not an ignore, so child processes inherit the default
+# disposition and the script's internal pipelines are unaffected.
+trap 'trap "" PIPE; printf "FAIL: ring-scan: output consumer closed the pipe mid-report — the report is TRUNCATED; discard it and re-run\n" >&2 || true; exit 4' PIPE
 
 VAULT="$HOME/vault"
 SURFACE="$VAULT/20-surface"
@@ -602,3 +620,10 @@ emit_section "report.dead_links"   ${DEADLINKS[@]+"${DEADLINKS[@]}"}
 emit_section "report.orphans"      ${ORPHANS[@]+"${ORPHANS[@]}"}
 emit_section "report.canon_leak"   ${LEAKS[@]+"${LEAKS[@]}"}
 emit_section "anomalies"         ${ANOM[@]+"${ANOM[@]}"}
+
+# Terminator, not a section. A capture that does not end with this line is
+# truncated and must be discarded — without it, the 2026-09-05 tail loss was
+# indistinguishable from a scan with nothing to say in its last two sections
+# (INFRA-88). The ring-maintenance skill's Step 2 verifies it before any
+# finding is consumed.
+printf '## end\n'

@@ -53,10 +53,29 @@ shell's own command line and reports a false positive; see
 
 ## Step 2: Run the scan
 
-Run:
+Run, redirecting stdout to a file — never through a pipeline:
+
 ```bash
-bash ~/.claude/cc-ring-scan.sh
+scan_out=$(mktemp)
+bash ~/.claude/cc-ring-scan.sh > "$scan_out"
+tail -1 "$scan_out"        # MUST print "## end" — otherwise discard and re-run
 ```
+
+**Never pipe the scan through `head`, or through `tee | head`.** On
+2026-09-05 the report was captured with
+`... 2>&1 | tee file | head -100`: `head` exited at line 100, `tee` died of
+SIGPIPE, the scanner died of SIGPIPE mid-emit, and `head`'s exit 0 hid the
+kill — the tee'd "full copy" silently lost `## report.canon_leak` and
+`## anomalies`, and the truncated file read as an emitter defect
+(INFRA-88). Redirect to a file, verify the terminator, then read the file
+in slices.
+
+The last line of a complete report is the bare terminator `## end`. **A
+capture whose last line is not `## end` is truncated — discard it and
+re-run; never triage findings from it.** The scanner also exits 4 with
+`TRUNCATED` on stderr when its consumer closes the pipe mid-report, but a
+pipeline's exit status can mask that (it did in the incident), so the
+terminator check is the authoritative gate.
 
 The script is strictly read-only, takes no arguments, and exits 2 with
 `FAIL: vault not mounted` on stderr if the vault gate in Step 1 was somehow
@@ -65,7 +84,7 @@ stdout: `## metrics`, `## auto.index_add`, `## auto.index_drop`,
 `## report.no_description`, `## propose.slots`, `## propose.tasks`,
 `## auto.promotion_fold`, `## propose.state`, `## propose.markers`,
 `## report.dead_links`, `## report.orphans`, `## report.canon_leak`,
-`## anomalies`.
+`## anomalies` — followed by the `## end` terminator line.
 
 `## metrics` is `key=value` lines — keep this output; it is the "before"
 half of Step 6's before-→-after table. Every other section is rows of

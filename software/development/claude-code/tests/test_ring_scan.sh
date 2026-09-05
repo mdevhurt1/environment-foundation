@@ -469,4 +469,35 @@ assert_eq "a scan whose consumer vanished exits with the dedicated status 4" \
 assert_contains "  ... and says TRUNCATED on stderr" \
     "TRUNCATED" "$(cat "$SD/err.txt" 2>/dev/null || true)"
 
+# =========================================================================
+# 11. WALKED PROMOTION SECTIONS ARE NOT RE-PROPOSED  (AI_ST-94)
+#
+# The 2026-09-04 pass re-queued six already-walked marker candidates — two
+# of which were re-drafted into canon, silently reversing rulings an earlier
+# walk had made — because nothing marks a source section as processed. The
+# fix: Phase 2 stamps walked headings `## Promotion candidates
+# [WALKED YYYY-MM-DD]`, and the marker grep skips stamped lines.
+# =========================================================================
+
+WK=$(mk_vault) || exit 1
+mk_mem "$WK" alpha "first memory"
+mk_mem "$WK" walked_mem "memory with a walked section" \
+    $'## Promotion candidates [WALKED 2026-08-20]\n- already dispositioned'
+mk_index "$WK" alpha walked_mem
+WK_TASKS="$WK/vault/20-surface/company/tasks"
+mkdir -p "$WK_TASKS/demo"
+printf '## Promotion candidates\n- an unwalked candidate\n' \
+    > "$WK_TASKS/demo/fresh-notes.md"
+printf '## Promotion candidates [WALKED 2026-09-04]\n- a walked candidate\n' \
+    > "$WK_TASKS/demo/walked-notes.md"
+
+t_run env HOME="$WK" bash "$SCAN_UNDER_TEST"
+marker_rows=$(section "$T_OUT" propose.markers)
+assert_contains "an unstamped promotion section is still proposed" \
+    "fresh-notes.md" "$marker_rows"
+assert_not_contains "a [WALKED]-stamped task section is not re-proposed" \
+    "walked-notes.md" "$marker_rows"
+assert_not_contains "a [WALKED]-stamped memory section is not re-proposed" \
+    "walked_mem" "$marker_rows"
+
 t_finish

@@ -240,6 +240,23 @@ you take on its findings:
    never auto-write these. The `<file>` field is an **evidence pointer**
    showing where the marker text was found; it is never a target. Nothing
    in this remit moves, archives, or edits the file a marker row names.
+
+   The scanner already skips sections stamped `[WALKED YYYY-MM-DD]` — a
+   stamped heading is a section a prior walk dispositioned (AI_ST-94). Two
+   triage rules on what remains:
+
+   - **Cross-check the archive before queueing.** For each candidate, grep
+     `state/_archive/promotion-processed-*.md` for it. A hit means the
+     candidate was already walked — its source section merely predates the
+     stamping mechanism or could not be stamped. Do not re-queue it;
+     instead stamp its source heading now (an in-place `20-surface/` write)
+     so the scanner stops finding it. Re-queueing a walked candidate can
+     silently reverse a ruling the CEO already made — the 2026-09-04 pass
+     re-queued six, and two re-entered canon against prior rulings.
+   - **Record the source on the entry.** A confirmed candidate is appended
+     to `promotion-queue.md` with its source pointer
+     (`from <file>:<line>`), because Step 5's stamp-on-retire needs to
+     find the heading again after the walk.
 6. **Dead-link / orphan.** `report.dead_links` rows are
    `<source_file><TAB><link_text><TAB><near_match><TAB><distance>` — the
    scanner has already filtered out every unresolved `[[link]]` except
@@ -366,6 +383,20 @@ relocates the log.
 **Retirement.** Processed entries move out of `promotion-queue.md` into
 `state/_archive/promotion-processed-YYYY-MM-DD.md`, stamped with disposition
 and, for promotions, the path they landed at.
+
+**Stamp the source section (AI_ST-94).** When a processed entry carries a
+`from <file>:<line>` source pointer, edit that source heading in place:
+`## Promotion candidates` becomes `## Promotion candidates
+[WALKED YYYY-MM-DD]` (today's date). This is deliberately a **write to task
+and memory files** — the one Phase 2 makes — and it is what stops the next
+scan re-proposing a section the CEO already ruled on; the archive record
+alone does not, because `propose.markers` greps sources, not the archive.
+Rules: in-place edit of the heading line only, `20-surface/` only, one
+heading per processed entry, applied for **every** disposition (promote,
+keep-surface, drop, and defer alike — defer keeps its queue entry, so
+re-proposing the source would duplicate it). If the source file cannot be
+found (archived or renamed since), skip the stamp; the archive cross-check
+in Step 4 is the fallback that catches it next pass.
 
 The pass is **resumable**. The queue is the state; deferred and unreached
 entries simply remain. Criterion 4 of a completed pass (Step 6) does not

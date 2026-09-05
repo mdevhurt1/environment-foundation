@@ -422,11 +422,21 @@ queue_entries=0
 [ -f "$QUEUE" ] && queue_entries=$( { grep -c '^- ' "$QUEUE" || true; } )
 
 # Marker grep is PROPOSE, never AUTO — it is noisy by nature.
+#
+# AI_ST-94: a walked section keeps its heading, so before stamping existed
+# every pass re-found, re-triaged, and sometimes re-promoted sections an
+# earlier walk had already dispositioned — the 2026-09-04 pass re-queued six,
+# two of which re-entered canon against a prior ruling. The ring-maintenance
+# walk (Phase 2) now stamps processed headings `[WALKED YYYY-MM-DD]`, and this
+# grep drops stamped lines. The date is matched as digits, not as a literal:
+# prose *about* the stamp convention writes "[WALKED YYYY-MM-DD]" and must
+# still surface as the noise it is, never masquerade as a disposition.
 MARKERS=()
 while IFS= read -r hit; do
     [ -z "$hit" ] && continue
     MARKERS+=("$hit")
 done < <( { grep -rniE 'promotion.candidate' "$MEM" "$TASKS" 2>/dev/null || true; } \
+          | { grep -v '\[WALKED [0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}\]' || true; } \
           | sed 's/:/\t/; s/:/\t/' | cut -c1-300)
 
 # ---- dead links / orphans (REPORT-ONLY) ----

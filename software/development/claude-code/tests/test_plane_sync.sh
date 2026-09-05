@@ -134,19 +134,37 @@ assert_contains "unreachable warn names the known cause" "INFRA-37" "$T_ERR"
 
 # --- 6. the HTTP flows, against a loopback fake Plane ---------------------
 cat > "$FIX/fake-plane.py" <<'PYEOF'
-import json
+import json, datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 states = [
     {"id": "s1", "name": "Todo",        "group": "unstarted"},
     {"id": "s2", "name": "In Progress", "group": "started"},
     {"id": "s3", "name": "Done",        "group": "completed"},
+    # The started group holds three distinct states, exactly like the live
+    # INFRA project. Only "In Progress" asserts someone is working right now
+    # (INFRA-73); the other two are deliberate resting states.
+    {"id": "s4", "name": "In Review",   "group": "started"},
+    {"id": "s5", "name": "Blocked",     "group": "started"},
 ]
+_now = datetime.datetime.now(datetime.timezone.utc)
+OLD = (_now - datetime.timedelta(days=30)).isoformat()
+NEW = _now.isoformat()
 issues = {
     "i1": {"id": "i1", "sequence_id": 7, "name": "Fixture seven", "state": "s1",
            "priority": "medium", "target_date": None},
     "i2": {"id": "i2", "sequence_id": 8, "name": "Fixture eight", "state": "s1",
            "priority": "none", "target_date": None},
+    # health fixtures: one issue per started state, all quiet for 30 days,
+    # plus a fresh In Review issue that a live slot claims (i6).
+    "i3": {"id": "i3", "sequence_id": 9,  "name": "Quiet in-progress", "state": "s2",
+           "priority": "none", "target_date": None, "updated_at": OLD},
+    "i4": {"id": "i4", "sequence_id": 10, "name": "Parked in review",  "state": "s4",
+           "priority": "none", "target_date": None, "updated_at": OLD},
+    "i5": {"id": "i5", "sequence_id": 11, "name": "Waiting blocked",   "state": "s5",
+           "priority": "none", "target_date": None, "updated_at": OLD},
+    "i6": {"id": "i6", "sequence_id": 12, "name": "Live in review",    "state": "s4",
+           "priority": "none", "target_date": None, "updated_at": NEW},
 }
 comments = {"i1": [], "i2": []}
 
@@ -298,6 +316,51 @@ assert_contains "unknown issue warns with the ref" "no issue TST-999" "$T_ERR"
 t_run run_sync "$BASE" -- resolve --issue NOPE-1
 assert_eq "unknown project exits 0" "0" "$T_RC"
 assert_contains "unknown project warns with the identifier" "NOPE" "$T_ERR"
+
+# --- 9. health: retired cycle check + started-state semantics -------------
+# INFRA-72: cycle tracking is retired — health must not fetch cycles or print
+# any cycle verdict. INFRA-73: only the state NAME "In Progress" asserts a
+# live session; In Review and Blocked are deliberate resting states and must
+# not be reported as zombie or stalled. The board-vs-fleet "behind" check
+# stays at group level: a live session on an In Review issue is fine.
+#
+# Fixture board at this point: i1 Done, i2 unstarted (TST-8), i3 In Progress
+# quiet 30d (TST-9), i4 In Review quiet 30d (TST-10), i5 Blocked quiet 30d
+# (TST-11), i6 In Review fresh (TST-12).
+SLOTS="$FIX/slots"
+mkdir -p "$SLOTS"
+printf -- '---\nsession_id: sess-live-12\ntask_id: TST-12\nstatus: running\n---\n' \
+    > "$SLOTS/sess-live-12.md"
+
+t_run run_sync "$BASE" -- health --mode-file "$MODE_PLAIN"
+assert_eq "health exits 0" "0" "$T_RC"
+assert_not_contains "health no longer warns NO ACTIVE CYCLE (INFRA-72)" \
+    "NO ACTIVE CYCLE" "$T_OUT"
+assert_not_contains "health prints no cycle verdict at all (check retired)" \
+    "active cycle" "$T_OUT"
+assert_contains "board line is OK when the fleet matches the board" \
+    "TST board health: OK" "$T_OUT"
+assert_contains "a quiet In Progress issue with no live session is still a zombie" \
+    "TST-9 is In Progress but no live session" "$T_OUT"
+assert_not_contains "an In Review issue appears nowhere in health output (INFRA-73)" \
+    "TST-10" "$T_OUT"
+assert_not_contains "a Blocked issue appears nowhere in health output (INFRA-73)" \
+    "TST-11" "$T_OUT"
+assert_contains "the quiet leash counts only In Progress issues" \
+    "1 stale-started" "$T_OUT"
+assert_not_contains "an In Review issue with a live session is not behind" \
+    "live session on TST-12" "$T_OUT"
+
+# A live session on an issue that never started must still flag: the
+# "behind" side of check 3 keeps the whole started group.
+printf -- '---\nsession_id: sess-live-8\ntask_id: TST-8\nstatus: running\n---\n' \
+    > "$SLOTS/sess-live-8.md"
+t_run run_sync "$BASE" -- health --mode-file "$MODE_PLAIN"
+assert_contains "a live session on an unstarted issue still flags as behind" \
+    "live session on TST-8 but the issue is not in a started state" "$T_OUT"
+assert_contains "board line is WARN when a session runs ahead of the board" \
+    "TST board health: WARN" "$T_OUT"
+rm -f "$SLOTS/sess-live-8.md" "$SLOTS/sess-live-12.md"
 
 kill "$SERVER_PID" 2>/dev/null
 wait "$SERVER_PID" 2>/dev/null

@@ -7,7 +7,7 @@
 #
 #   session-start     Step 5a  `start`   — read, reconcile, one write
 #   end-conversation  Step 2a  `resolve` then `finish` — closing state + comment
-#   ring-maintenance  Step 2a  `health`  — three read-only staleness checks
+#   ring-maintenance  Step 2a  `health`  — two read-only staleness checks
 #
 # Design source: ~/vault/20-surface/company/tasks/plane-system-of-record/
 # convention.md (2026-08-11), implemented as written. Section references below
@@ -81,7 +81,7 @@ Subcommands:
                           done | blocked | progress. PATCHes the state (for
                           `progress`, leaves it alone) and posts one audit
                           comment. Requires --note.
-  health [--workspace W]  The three read-only staleness checks. Never mutates
+  health [--workspace W]  The two read-only staleness checks. Never mutates
                           anything. Prints one board-health line per project
                           plus the findings.
 
@@ -447,7 +447,12 @@ def cmd_finish():
         % (REF, now.get("name", "?"), now.get("group", "?"), ncomments))
 
 def cmd_health():
-    """Three read-only checks (convention S4). Mutates nothing, ever."""
+    """Two read-only checks (convention S4). Mutates nothing, ever.
+
+    Check 1 of the convention — "no active cycle" — was retired 2026-09-05
+    (INFRA-72): the company does not work in sprints, so the check fired 7
+    identical WARNs per run against a decision already made. The historical
+    cycles remain on the server as an archive; health just never asks."""
     # Fleet side: what the tree says is live, from task_id on running slots.
     live = {}
     try:
@@ -484,45 +489,48 @@ def cmd_health():
             warn("%s: %s" % (ident, e))
             continue
 
-        # Check 1 — no active cycle.
-        try:
-            cycles = paged("/workspaces/%s/projects/%s/cycles/" % (WS, pid))
-        except SoftFail:
-            cycles = []
-        today = datetime.date.today().isoformat()
-        active = [c for c in cycles
-                  if (c.get("start_date") or "9999") <= today <= (c.get("end_date") or "0000")]
-
-        started, stale_started, stale_backlog = [], [], []
+        # The started group holds three distinct states (In Progress,
+        # In Review, Blocked) but only the NAME "In Progress" asserts that
+        # someone is working right now. In Review and Blocked mean the work
+        # is waiting on an external event — correct resting states with no
+        # live session by design, so neither the zombie check nor the quiet
+        # leash may count them (INFRA-73, CEO ruling 2026-09-05).
+        started, in_progress, stale_started, stale_backlog = [], [], [], []
         for i in issues:
-            g = smap.get(i.get("state"), {}).get("group")
+            st = smap.get(i.get("state"), {})
+            g = st.get("group")
             if g == "started":
                 started.append(i)
-                d = days_since(i.get("updated_at"))
-                if d is not None and d > STARTED_QUIET:
-                    stale_started.append((i, d))
+                if st.get("name", "").lower() == "in progress":
+                    in_progress.append(i)
+                    d = days_since(i.get("updated_at"))
+                    if d is not None and d > STARTED_QUIET:
+                        stale_started.append((i, d))
             elif g in ("backlog", "unstarted"):
                 d = days_since(i.get("updated_at"))
                 if d is not None and d > BACKLOG_QUIET:
                     stale_backlog.append((i, d))
 
         # Check 3 — the board disagrees with the fleet, both directions.
+        # `behind` keeps the whole started group (a live session may
+        # legitimately sit on an In Review issue); `zombie` narrows to
+        # In Progress, the only state that promises a live session.
         started_refs = {"%s-%s" % (ident, i.get("sequence_id")) for i in started}
+        in_progress_refs = {"%s-%s" % (ident, i.get("sequence_id")) for i in in_progress}
         proj_live = {r for r in live if r.rsplit("-", 1)[0] == ident}
-        behind = proj_live - started_refs      # live session, issue not started
-        zombie = started_refs - proj_live       # started issue, no live session
+        behind = proj_live - started_refs        # live session, issue not started
+        zombie = in_progress_refs - proj_live    # In Progress issue, no live session
 
-        flag = "OK " if (active and not behind) else "WARN"
-        say("%s board health: %s %s | %d started | %d live session(s) | "
+        flag = "OK " if not behind else "WARN"
+        say("%s board health: %s %d started | %d live session(s) | "
             "%d stale-started | %d stale-backlog"
             % (ident, flag,
-               "active cycle" if active else "NO ACTIVE CYCLE",
                len(started), len(proj_live), len(stale_started), len(stale_backlog)))
         for r in sorted(behind):
             findings.append("%s: live session on %s but the issue is not in a started state"
                             % (ident, r))
         for r in sorted(zombie):
-            findings.append("%s: %s is started but no live session claims it "
+            findings.append("%s: %s is In Progress but no live session claims it "
                             "(a session died without its bookend)" % (ident, r))
         for i, d in sorted(stale_started, key=lambda t: -t[1])[:5]:
             findings.append("%s: %s-%s started but quiet %d days — %s"

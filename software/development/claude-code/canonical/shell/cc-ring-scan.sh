@@ -435,7 +435,15 @@ MARKERS=()
 while IFS= read -r hit; do
     [ -z "$hit" ] && continue
     MARKERS+=("$hit")
-done < <( { grep -rniE 'promotion.candidate' "$MEM" "$TASKS" 2>/dev/null || true; } \
+# The excludes drop the grep's own exhaust: saved copies of previous scan
+# output, editor/backup copies, archived task folders, and preserved
+# LiveSync-conflict / loop copies of MEMORY.md. On 2026-09-02, ~31 of 37
+# rows were these self-quotations — noise dense enough to hide the six real
+# duplicates the pass then mis-queued.
+done < <( { grep -rniE 'promotion.candidate' "$MEM" "$TASKS" \
+                 --exclude='scan-output.txt' --exclude='*.bak' \
+                 --exclude-dir='_archive' --exclude-dir='obsidian-conflicts' \
+                 --exclude-dir='memory-loop' 2>/dev/null || true; } \
           | { grep -v '\[WALKED [0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}\]' || true; } \
           | sed 's/:/\t/; s/:/\t/' | cut -c1-300)
 

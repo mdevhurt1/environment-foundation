@@ -500,4 +500,42 @@ assert_not_contains "a [WALKED]-stamped task section is not re-proposed" \
 assert_not_contains "a [WALKED]-stamped memory section is not re-proposed" \
     "walked_mem" "$marker_rows"
 
+# =========================================================================
+# 12. THE MARKER GREP SKIPS ITS OWN EXHAUST  (AI_ST-94)
+#
+# Of 37 marker rows on the 2026-09-02 pass, ~31 were self-referential:
+# saved copies of previous scan output, MEMORY.md backups and conflict
+# copies, archived task folders. An 84% noise rate is what made the six
+# real duplicates invisible.
+# =========================================================================
+
+EX=$(mk_vault) || exit 1
+mk_mem "$EX" alpha "first memory"
+mk_index "$EX" alpha
+EX_TASKS="$EX/vault/20-surface/company/tasks"
+EX_MEM="$EX/vault/20-surface/claude-memory"
+mkdir -p "$EX_TASKS/prep" "$EX_TASKS/_archive/old" \
+         "$EX_MEM/obsidian-conflicts" "$EX_MEM/memory-loop"
+printf '## Promotion candidates\n- real\n'            > "$EX_TASKS/prep/real.md"
+printf '## Promotion candidates\n- prior scan copy\n' > "$EX_TASKS/prep/scan-output.txt"
+printf '## Promotion candidates\n- backup\n'          > "$EX_TASKS/prep/session.md.bak"
+printf '## Promotion candidates\n- archived\n'        > "$EX_TASKS/_archive/old/session.md"
+printf 'hook mentioning promotion candidates\n'       > "$EX_MEM/obsidian-conflicts/MEMORY-conflict.md"
+printf 'hook mentioning promotion candidates\n'       > "$EX_MEM/memory-loop/MEMORY-backup.md"
+
+t_run env HOME="$EX" bash "$SCAN_UNDER_TEST"
+exhaust_rows=$(section "$T_OUT" propose.markers)
+assert_contains "a live task file's marker is still proposed" \
+    "real.md" "$exhaust_rows"
+assert_not_contains "a saved scan-output copy is exhaust, not a candidate" \
+    "scan-output.txt" "$exhaust_rows"
+assert_not_contains "a .bak file is exhaust, not a candidate" \
+    ".bak" "$exhaust_rows"
+assert_not_contains "an _archive/ hit is exhaust, not a candidate" \
+    "_archive" "$exhaust_rows"
+assert_not_contains "a preserved conflict copy of the index is exhaust" \
+    "obsidian-conflicts" "$exhaust_rows"
+assert_not_contains "a memory-loop backup of the index is exhaust" \
+    "memory-loop" "$exhaust_rows"
+
 t_finish

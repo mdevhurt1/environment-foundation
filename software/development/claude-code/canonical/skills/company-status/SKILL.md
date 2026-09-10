@@ -43,7 +43,7 @@ Concretely, inside this skill:
 
 ## Checklist
 
-- [ ] Step 1: Run the scan (one Bash call, no `cd`)
+- [ ] Step 1: Run the scan (one Bash call, no `cd`), plus board health once per day (writes `state/.health-last-run`)
 - [ ] Step 2: Read the scan output and write the three-question report
 - [ ] Step 3: Decide reclaim candidates
 - [ ] Step 4: Reclaim, atomically
@@ -55,6 +55,26 @@ Concretely, inside this skill:
 
 ```bash
 bash ~/.claude/skills/company-status/scripts/cc-status-scan.sh --session-id <your-session-id>
+
+# Board health, at most once per calendar day (AI_ST-99, ratified item 3).
+# The EA orientation was the obvious home and is the wrong one: it fires at
+# EA session START, and an EA session routinely outlives a day -- the session
+# running on 2026-09-10 was launched 2026-09-09. company-status is the pass
+# the EA actually re-runs, so the cadence rides it, guarded by a date stamp.
+# ring-maintenance keeps its weekly run; this does not replace it.
+stamp="$HOME/vault/20-surface/company/_command-center/state/.health-last-run"
+today=$(date +%F)
+if [ "$(cat "$stamp" 2>/dev/null)" != "$today" ]; then
+    sync=~/.claude/cc-plane-sync.sh
+    [ -f "$sync" ] || sync=~/.claude/skills/../shell/cc-plane-sync.sh
+    if [ -f "$sync" ]; then
+        bash "$sync" health && printf '%s\n' "$today" > "$stamp"
+    else
+        echo "plane-sync: helper not installed — skipping board health (run cc-doctor)"
+    fi
+else
+    echo "plane-sync: board health already run today ($today) — skipping"
+fi
 ```
 
 **Run it as its own Bash call, with no `cd` anywhere in the command.** The
@@ -131,6 +151,11 @@ Concise list; do not paste raw event files or raw scan output.
 >
 > **Reclaimed this pass:** none. `desktop-cc-bootstrap` is done but
 > deliberately unmerged — window kept pending your call.
+
+4. **Board health** — if Step 1 ran it, one line: the projects flagged WARN,
+   and the coverage line's unlinked count. An unlinked count that is a large
+   share of the running fleet means board health is reporting on less than it
+   looks like it is; say so rather than passing on the OK.
 
 Every line must trace to something the scan printed **this turn**.
 

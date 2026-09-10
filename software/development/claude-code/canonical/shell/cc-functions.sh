@@ -1185,25 +1185,29 @@ cc-branch() {
     # is delivered into the child's window after launch via the AI_ST-40
     # paste-verify-Enter dance (__cc_deliver_brief), so an autonomous child
     # costs the EA zero manual touches on the happy path (AI_ST-72).
-    local task_id="" repo_arg="" brief_file=""
+    local task_id="" repo_arg="" brief_file="" issue_ref=""
     while [ $# -gt 0 ]; do
         case "$1" in
             --brief)
                 [ $# -ge 2 ] || { __cc_die "--brief needs a file"; return 1; }
                 brief_file="$2"; shift 2 ;;
             --brief=*) brief_file="${1#*=}"; shift ;;
-            -*) __cc_die "unknown option: $1 (usage: cc-branch [--brief <file>] <task-id> [<repo-path>])"; return 1 ;;
+            --issue)
+                [ $# -ge 2 ] || { __cc_die "--issue needs a reference (e.g. AI_ST-99)"; return 1; }
+                issue_ref="$2"; shift 2 ;;
+            --issue=*) issue_ref="${1#*=}"; shift ;;
+            -*) __cc_die "unknown option: $1 (usage: cc-branch [--brief <file>] [--issue <REF>] <task-id> [<repo-path>])"; return 1 ;;
             *)
                 if [ -z "$task_id" ]; then task_id="$1"
                 elif [ -z "$repo_arg" ]; then repo_arg="$1"
-                else __cc_die "too many arguments (usage: cc-branch [--brief <file>] <task-id> [<repo-path>])"; return 1
+                else __cc_die "too many arguments (usage: cc-branch [--brief <file>] [--issue <REF>] <task-id> [<repo-path>])"; return 1
                 fi
                 shift ;;
         esac
     done
 
     if [ -z "$task_id" ]; then
-        __cc_die "usage: cc-branch [--brief <file>] <task-id> [<repo-path>]"
+        __cc_die "usage: cc-branch [--brief <file>] [--issue <REF>] <task-id> [<repo-path>]"
         return 1
     fi
 
@@ -1211,6 +1215,14 @@ cc-branch() {
     # permission resolvers: a typo'd path must not leave a worktree behind.
     if [ -n "$brief_file" ] && [ ! -f "$brief_file" ]; then
         __cc_die "brief file not found: $brief_file"
+        return 1
+    fi
+
+    # Same rule as --brief and the model resolver: a typo'd reference must not
+    # leave a worktree, a branch or a tmux window behind. The shape is
+    # cc-plane-sync.sh's is_issue_ref().
+    if [ -n "$issue_ref" ] && ! [[ "$issue_ref" =~ ^[A-Z][A-Z0-9_]*-[0-9]+$ ]]; then
+        __cc_die "--issue must look like PROJECT-123 (got: $issue_ref)"
         return 1
     fi
 
@@ -1300,6 +1312,21 @@ cc-branch() {
     worktree="${repo_root%/*}/${repo_name}-branch-${task_id_safe}"
     branch="branch/${task_id}"
 
+    # Resolved once, here, so the log line and the .cc-mode cannot disagree.
+    local plane_stamp
+    plane_stamp=$(__cc_derive_plane_issue "$task_id" "$issue_ref")
+
+    # A task id that is itself issue-shaped and DISAGREES with --issue means
+    # the worktree, the tmux window and the task folder are named for one
+    # issue while board sync targets another. Legal and occasionally intended
+    # -- never silent: cc-continue derives the sandbox carveout from
+    # plane_issue, so the two names diverge for the rest of the task's life.
+    if [ -n "$issue_ref" ] && [[ "$task_id" =~ ^[A-Z][A-Z0-9_]*-[0-9]+$ ]] \
+       && [ "$issue_ref" != "$task_id" ]; then
+        __cc_log "WARNING: --issue $issue_ref differs from the issue-shaped task id $task_id;"
+        __cc_log "         worktree and window are named $task_id, board sync targets $issue_ref"
+    fi
+
     if [ -d "$worktree" ]; then
         __cc_log "worktree already exists at $worktree — reusing"
     else
@@ -1317,7 +1344,7 @@ cc-branch() {
 
     __cc_write_mode_file "$worktree" branched "$task_id" "$repo_root" "$child_session_id" "$parent_session_id" \
         "$__cc_model_value" "$__cc_model_source" "$__cc_perm_value" "$__cc_perm_source" \
-        "$(__cc_derive_plane_issue "$task_id")"
+        "$plane_stamp"
 
     # A cc-branch child is autonomous by construction: nobody is watching its
     # pane when it starts. Vouch for the worktree we just created so it cannot
@@ -1340,6 +1367,7 @@ cc-branch() {
     __cc_log "          worktree=$worktree"
     __cc_log "          model=$__cc_model_value ($__cc_model_source)"
     __cc_log "          perm-mode=${__cc_perm_value:-settings-default} ($__cc_perm_source)"
+    __cc_log "          plane_issue=${plane_stamp:-(none)}"
 
     # Identity travels via the worktree's .cc-mode.
     #

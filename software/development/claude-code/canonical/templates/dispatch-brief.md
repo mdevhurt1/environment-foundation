@@ -89,6 +89,12 @@ EA applies it. (Single-writer rule; a child board write forks the status
 surface from its verifier.) This includes the bookends' own Plane sync —
 skip `cc-plane-sync.sh start`/`finish` for this session's issue; state the
 board text as a recommendation only.
+**Re-check this clause at each bookend step, not once when you read this
+brief** — INFRA-86 wrote to the board with the carve-out present, by batching
+the session-start probes before re-reading it; INFRA-72 was the first clean
+run, and the per-step check is what made the difference. If a bookend write
+does land, **never revert it** — a revert is a second write. Name it in your
+completion event so the EA knows which write was the bookend's.
 
 ## Outbound discipline
 

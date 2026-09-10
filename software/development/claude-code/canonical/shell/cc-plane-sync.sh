@@ -96,6 +96,9 @@ Options:
   --workspace <slug>      Plane workspace slug (default: homelab).
   --dry-run               Resolve and report what would be written; write
                           nothing. Applies to `start` and `finish`.
+  --print-ref             Print the reference the identity chain resolved and
+                          exit 0, before any network or auth work. Empty
+                          output means no reference, which is a legal answer.
   -h, --help              Show this help.
 
 Exit status is 0 for every network, auth, or lookup failure -- these warn and
@@ -126,7 +129,7 @@ if [ "$SUBCMD" = finish ]; then
     esac
 fi
 
-ISSUE_REF=""; NOTE=""; MODE_FILE=""; ASSERT_SESSION=""; DRY_RUN=0
+ISSUE_REF=""; NOTE=""; MODE_FILE=""; ASSERT_SESSION=""; DRY_RUN=0; PRINT_REF=0
 
 # An option whose value is missing must say so, not die on `shift 2` under
 # `set -e` with an empty message.
@@ -144,6 +147,7 @@ while [ $# -gt 0 ]; do
         --session-id) need_val "$@"; ASSERT_SESSION="$2"; shift 2 ;;
         --workspace)  need_val "$@"; WORKSPACE="$2"; shift 2 ;;
         --dry-run)    DRY_RUN=1; shift ;;
+        --print-ref)  PRINT_REF=1; shift ;;
         -h|--help)    usage; exit 0 ;;
         *) printf 'plane-sync: unexpected argument: %s\n' "$1" >&2; usage >&2; exit 2 ;;
     esac
@@ -201,6 +205,23 @@ if [ -z "$ISSUE_REF" ] && [ -n "$SLUG" ] && [ -f "$TASKS_DIR/$SLUG/plane.md" ]; 
 fi
 if [ -z "$ISSUE_REF" ] && [ -n "$SLUG" ] && is_issue_ref "$SLUG"; then
     ISSUE_REF="$SLUG"                                    # precedence 4
+fi
+
+# --print-ref: report the reference this chain just resolved, and stop.
+#
+# Read-only by construction -- it exits before the API layer below, so it needs
+# neither a key nor a network. It exists because the four precedences above are
+# the ONLY implementation of this rule in this file, and
+# tests/test_slot_plane_issue.sh has to compare them against
+# cc-tree-slot-write.sh's copy. `resolve` cannot serve: its identity report
+# sits below the auth gate in the python block, so a keyless run prints
+# nothing. Printing $ISSUE_REF here reports the chain rather than
+# re-implementing it.
+#
+# Empty output means "no reference", which is a legal answer, not a failure.
+if [ "$PRINT_REF" = 1 ]; then
+    printf '%s\n' "$ISSUE_REF"
+    exit 0
 fi
 
 # ---- the API layer ---------------------------------------------------------

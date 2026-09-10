@@ -474,8 +474,18 @@ def cmd_health():
     (INFRA-72): the company does not work in sprints, so the check fired 7
     identical WARNs per run against a decision already made. The historical
     cycles remain on the server as an archive; health just never asks."""
-    # Fleet side: what the tree says is live, from task_id on running slots.
-    live = {}
+    # Fleet side: what the tree says is live. The reference is the slot's
+    # explicit plane_issue (AI_ST-99); task_id is the pre-AI_ST-99 fallback,
+    # kept so slots written by an older cc-tree-slot-write.sh keep counting.
+    #
+    # Before AI_ST-99 this read task_id ONLY -- which is the slug -- so the
+    # check implemented precedence 4 of this file's own four-precedence
+    # identity chain and nothing else. Sessions linked by .cc-mode or by a
+    # task folder's plane.md were invisible to it, as was every launcher that
+    # does not name the worktree after the issue (cc-build, the command
+    # centre, any descriptive slug). Measured 2026-09-10: 1 of 2 running
+    # sessions counted. The counts below are what make that visible.
+    live, running_slots, linked = {}, 0, 0
     try:
         for fn in sorted(os.listdir(SLOTS)):
             if not fn.endswith(".md"):
@@ -492,13 +502,17 @@ def cmd_health():
                             fm[k.strip()] = v.strip()
             except OSError:
                 continue
-            tid = fm.get("task_id", "")
-            if fm.get("status") == "running" and tid:
-                key, _, num = tid.rpartition("-")
-                if key and num.isdigit():
-                    live.setdefault(tid, []).append(fm.get("session_id", fn))
+            if fm.get("status") != "running":
+                continue
+            running_slots += 1
+            ref = fm.get("plane_issue", "") or fm.get("task_id", "")
+            key, _, num = ref.rpartition("-")
+            if ref and key and num.isdigit():
+                live.setdefault(ref, []).append(fm.get("session_id", fn))
+                linked += 1
     except OSError as e:
         warn("cannot read tree slots (%s) — check 3 skipped" % e)
+        running_slots = linked = 0
 
     findings = []
     for proj in projects():
@@ -542,7 +556,13 @@ def cmd_health():
         behind = proj_live - started_refs        # live session, issue not started
         zombie = in_progress_refs - proj_live    # In Progress issue, no live session
 
-        flag = "OK " if not behind else "WARN"
+        # The summary must not contradict the detail beneath it. `zombie`
+        # emits a finding on the very next lines, and before AI_ST-99 the
+        # board line above it still read OK -- a clean the run had already
+        # disproved. stale_started and stale_backlog stay out of the flag on
+        # purpose: they have their own columns and a long backlog is a triage
+        # question, not a board-vs-fleet disagreement.
+        flag = "OK " if not behind and not zombie else "WARN"
         say("%s board health: %s %d started | %d live session(s) | "
             "%d stale-started | %d stale-backlog"
             % (ident, flag,
@@ -556,6 +576,14 @@ def cmd_health():
         for i, d in sorted(stale_started, key=lambda t: -t[1])[:5]:
             findings.append("%s: %s-%s started but quiet %d days — %s"
                             % (ident, ident, i.get("sequence_id"), d, i.get("name", "?")[:60]))
+
+    # Say how much of the fleet this check could see. A board-health run that
+    # reports OK without stating its coverage is how a false clean survives:
+    # one linked session and one unlinked reads exactly like two linked.
+    print()
+    say("fleet coverage: %d running slot(s), %d carrying a Plane reference, "
+        "%d unlinked (board health cannot see the unlinked)"
+        % (running_slots, linked, running_slots - linked))
 
     if findings:
         print()

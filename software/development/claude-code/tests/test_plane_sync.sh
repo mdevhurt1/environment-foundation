@@ -338,8 +338,13 @@ assert_not_contains "health no longer warns NO ACTIVE CYCLE (INFRA-72)" \
     "NO ACTIVE CYCLE" "$T_OUT"
 assert_not_contains "health prints no cycle verdict at all (check retired)" \
     "active cycle" "$T_OUT"
-assert_contains "board line is OK when the fleet matches the board" \
-    "TST board health: OK" "$T_OUT"
+# The board line must not read OK above a finding it is printing. This
+# fixture has TST-9 In Progress with no live session -- the run emits the
+# zombie finding two assertions below, and before AI_ST-99 the line above it
+# still said OK. A summary that contradicts its own detail is the false-clean
+# pattern in feedback_a_check_that_cannot_fail_is_a_false_clean.
+assert_contains "board line is WARN when a zombie is reported" \
+    "TST board health: WARN" "$T_OUT"
 assert_contains "a quiet In Progress issue with no live session is still a zombie" \
     "TST-9 is In Progress but no live session" "$T_OUT"
 assert_not_contains "an In Review issue appears nowhere in health output (INFRA-73)" \
@@ -361,6 +366,61 @@ assert_contains "a live session on an unstarted issue still flags as behind" \
 assert_contains "board line is WARN when a session runs ahead of the board" \
     "TST board health: WARN" "$T_OUT"
 rm -f "$SLOTS/sess-live-8.md" "$SLOTS/sess-live-12.md"
+
+# --- health reads plane_issue, not just task_id (AI_ST-99) -----------------
+# A slot whose task_id is a DESCRIPTIVE slug but which carries an explicit
+# plane_issue must count as a live session on that issue. This is the case
+# that was invisible before AI_ST-99: cmd_health substituted task_id, so a
+# session linked by .cc-mode or by a task folder's plane.md contributed
+# nothing to the fleet set, and the board silently reported less than it saw.
+printf -- '---\nsession_id: sess-desc\ntask_id: some-descriptive-slug\nplane_issue: TST-12\nstatus: running\n---\n' \
+    > "$SLOTS/sess-desc.md"
+t_run run_sync "$BASE" -- health --mode-file "$MODE_PLAIN"
+assert_contains "a descriptive-slug slot with plane_issue counts as live" \
+    "1 live session(s)" "$T_OUT"
+assert_not_contains "and its In Review issue is not a zombie" \
+    "TST-12 is In Progress" "$T_OUT"
+
+# plane_issue beats task_id when both are present and disagree.
+printf -- '---\nsession_id: sess-both\ntask_id: TST-8\nplane_issue: TST-12\nstatus: running\n---\n' \
+    > "$SLOTS/sess-both.md"
+t_run run_sync "$BASE" -- health --mode-file "$MODE_PLAIN"
+assert_not_contains "plane_issue wins over task_id" \
+    "live session on TST-8" "$T_OUT"
+rm -f "$SLOTS/sess-both.md"
+
+# A slot with NO plane_issue still resolves by task_id: slots written before
+# AI_ST-99 must keep counting, or the fix would blind the check it repairs.
+#
+# sess-old claims TST-9, NOT TST-12. The summary counts distinct ISSUES with
+# a live session (len(proj_live)), so putting both slots on TST-12 would print
+# "1 live session(s)" whether or not the task_id fallback fired -- a case that
+# cannot fail is the very false clean this ticket is about. On TST-9 the count
+# genuinely reaches 2, and TST-9 stops being reported as a zombie, which is
+# true ONLY if the fallback resolved it.
+printf -- '---\nsession_id: sess-old\ntask_id: TST-9\nstatus: running\n---\n' \
+    > "$SLOTS/sess-old.md"
+t_run run_sync "$BASE" -- health --mode-file "$MODE_PLAIN"
+assert_contains "a pre-AI_ST-99 slot still counts via task_id" \
+    "2 live session(s)" "$T_OUT"
+assert_not_contains "...and the issue it claims is no longer a zombie" \
+    "TST-9 is In Progress but no live session" "$T_OUT"
+rm -f "$SLOTS/sess-old.md"
+
+# --- the coverage line: name the blind spot (AI_ST-99) --------------------
+# The reason this check reported a clean it had not measured was that nothing
+# said how much of the fleet it could see. One live session linked and one
+# not looks identical to two linked, unless the run says so.
+printf -- '---\nsession_id: sess-unlinked\ntask_id: plane-system-of-record\nstatus: running\n---\n' \
+    > "$SLOTS/sess-unlinked.md"
+t_run run_sync "$BASE" -- health --mode-file "$MODE_PLAIN"
+assert_contains "coverage names the running total" \
+    "2 running slot(s)" "$T_OUT"
+assert_contains "coverage names how many carry a reference" \
+    "1 carrying a Plane reference" "$T_OUT"
+assert_contains "coverage names the blind spot" \
+    "1 unlinked" "$T_OUT"
+rm -f "$SLOTS/sess-unlinked.md" "$SLOTS/sess-desc.md"
 
 kill "$SERVER_PID" 2>/dev/null
 wait "$SERVER_PID" 2>/dev/null

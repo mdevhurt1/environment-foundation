@@ -133,6 +133,22 @@ that read ids and slugs with `grep '^key=' | cut -d= -f2-` are fine as they are,
 because those values are bare tokens. Full reasoning is in the contract comment
 above `__cc_mode_quote` in `canonical/shell/cc-functions.sh` (INFRA-45).
 
+`plane_issue` is the session's Plane reference. It is written on every launch
+and is **empty** when there is none — ad-hoc work legitimately has no issue,
+and a fixed field list is what keeps the `grep '^key=' | cut -d= -f2-` readers
+correct. It is produced two ways: `cc-branch --issue <REF>`, or derived from a
+task id that is already issue-shaped (`cc-branch AI_ST-99` stamps `AI_ST-99`
+without a flag). `cc-plane-sync.sh adopt <REF>` back-fills it for work that
+acquires an issue mid-flight.
+
+`cc-tree-slot-write.sh` resolves the same reference offline — `.cc-mode`, then
+the task folder's `plane.md`, then an issue-shaped slug — and stamps it into
+the slot as `plane_issue:`, which is what `cc-plane-sync.sh health` reads to
+build its fleet set. Before AI_ST-99 health substituted `task_id` and so
+implemented only the last of those three, making it blind to any session whose
+worktree was not named for its issue. `tests/test_slot_plane_issue.sh` asserts
+the two resolvers agree.
+
 **Workspace trust.** Claude Code asks interactively before touching a directory
 it has not been told to trust, and — measured on 2.1.236 — it asks under *every*
 permission mode, `--dangerously-skip-permissions` included. The bypass flag was
@@ -214,6 +230,10 @@ the other option.
   statusline). Walks the closing ritual: memory delta, spec/plan
   capture, transcript decision, vault sync, promotion candidates,
   worktree fold.
+
+`health` reports a `fleet coverage` line naming how many running sessions
+carry a Plane reference and how many do not. Read it before believing an `OK`:
+the check can only see the linked ones.
 
 ### Vault
 

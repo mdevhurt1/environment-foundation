@@ -94,7 +94,28 @@ sync=~/.claude/cc-plane-sync.sh
   || echo "plane-sync: helper not installed — skipping Plane sync (run cc-doctor)"
 ```
 
-No Plane issue reported → skip to Step 3 (normal for ad-hoc work).
+No Plane issue reported, and Step 2 captured **no** new spec or plan → skip to
+Step 3. Normal, and the common case for ad-hoc work.
+
+No Plane issue reported, but Step 2 **did** capture a new spec or plan → this
+work outlives the session and has no board presence, which is the state the
+convention was written to end. Ask **one** question: does this have a Plane
+issue to link, and which?
+
+```bash
+bash "$sync" adopt <REF>     # then continue with `finish` below
+```
+
+Answer "no", or no answer → skip to Step 3 and say so in the close-out.
+
+**This is not a second question.** It fires only where the bookend currently
+asks none: a session that resolves an issue asks its one done/progress/blocked
+question and never reaches this branch. The S5 warning — one question at each
+end or do not do it — is preserved exactly.
+
+**Autonomous sessions never ask.** Report the reference you would have adopted
+in the completion event and skip; the board-discipline carve-out covers this
+branch as it covers `start` and `finish`.
 Otherwise **ask exactly one question**, quoting the issue line the helper
 printed: is this **done**, **still in progress**, or **blocked**? Then:
 

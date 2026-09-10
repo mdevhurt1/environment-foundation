@@ -627,6 +627,35 @@ __cc_mode_unquote() {
     esac
 }
 
+# __cc_derive_plane_issue <task_id> [<explicit_ref>]
+#
+# Resolve the Plane reference to stamp into a .cc-mode about to be written.
+# Prints the reference, or nothing. Two sources, highest precedence first:
+#
+#   1. an explicit reference   (cc-branch --issue REF)
+#   2. the task id itself, when it is already issue-shaped
+#
+# (2) is what gives the field fleet coverage without anyone passing a flag: a
+# branched session is launched `cc-branch AI_ST-99`, so the task id already IS
+# the reference. Stamping it EXPLICITLY rather than leaving it to be
+# re-derived downstream is the point of AI_ST-99 -- cc-plane-sync.sh and
+# cc-tree-slot-write.sh were deriving the reference by two different rules,
+# and the one that reports board health saw only this last precedence.
+#
+# The shape is the one cc-plane-sync.sh's is_issue_ref() enforces. The two
+# regexes must stay identical; tests/test_slot_plane_issue.sh asserts they
+# agree on a shared table of cases.
+__cc_derive_plane_issue() {
+    local task_id="${1-}" explicit="${2-}"
+    if [ -n "$explicit" ]; then
+        printf '%s' "$explicit"
+        return 0
+    fi
+    if [[ "$task_id" =~ ^[A-Z][A-Z0-9_]*-[0-9]+$ ]]; then
+        printf '%s' "$task_id"
+    fi
+}
+
 __cc_write_mode_file() {
     # $1 = directory, $2 = mode, $3 = slug, $4 = parent_repo,
     # $5 = session_id, $6 = parent_id (may be empty for top-level launches),
@@ -635,13 +664,17 @@ __cc_write_mode_file() {
     # $9 = perm_mode (the --permission-mode value, or EMPTY for the
     #      settings-default path -- empty is a legal, expected value here),
     # $10 = perm_mode_source (env | policy:<role> | settings-default)
+    # $11 = plane_issue (the Plane reference, or EMPTY -- empty is a legal,
+    #       expected value here, exactly as it is for perm_mode: ad-hoc work
+    #       legitimately has no issue, and a fixed field list is what keeps
+    #       the `grep '^key=' | cut -d= -f2-` readers correct)
     #
     # Every value goes through __cc_mode_quote -- including started_at, which
     # this function computes rather than receives. Encoding a value the writer
     # trusts costs nothing and removes the standing question of which fields
     # are covered; the old code's answer to that question was "six of nine",
     # and the three it left out were exactly the three that broke.
-    local _mode _slug _prepo _sid _pid _model _msrc _perm _psrc _started
+    local _mode _slug _prepo _sid _pid _model _msrc _perm _psrc _started _plane
     _mode=$(__cc_mode_quote "$2")
     _slug=$(__cc_mode_quote "$3")
     _prepo=$(__cc_mode_quote "$4")
@@ -651,12 +684,13 @@ __cc_write_mode_file() {
     _msrc=$(__cc_mode_quote "${8:-}")
     _perm=$(__cc_mode_quote "${9:-}")
     _psrc=$(__cc_mode_quote "${10:-}")
+    _plane=$(__cc_mode_quote "${11:-}")
     _started=$(__cc_mode_quote "$(date -Iseconds)")
 
     # Quoting is lossless, so it is silent. Dropping a newline is not, so it
     # is not: a session id that is quietly shorter than the one the caller
     # passed is the kind of thing that gets diagnosed three tickets later.
-    case "$2$3$4$5${6:-}${7:-}${8:-}${9:-}${10:-}" in
+    case "$2$3$4$5${6:-}${7:-}${8:-}${9:-}${10:-}${11:-}" in
         *$'\n'*|*$'\r'*)
             __cc_log "WARNING: .cc-mode: a line break in a value was dropped (the format is line-oriented)" ;;
     esac
@@ -672,6 +706,7 @@ model=$_model
 model_source=$_msrc
 perm_mode=$_perm
 perm_mode_source=$_psrc
+plane_issue=$_plane
 EOF
 }
 
@@ -813,7 +848,8 @@ cc-explore() {
     session_id=$(__cc_mint_session_id)
 
     __cc_write_mode_file "$worktree" exploration "$slug" "$repo_root" "$session_id" "${CC_PARENT_ID:-}" \
-        "$__cc_model_value" "$__cc_model_source" "$__cc_perm_value" "$__cc_perm_source"
+        "$__cc_model_value" "$__cc_model_source" "$__cc_perm_value" "$__cc_perm_source" \
+        "$(__cc_derive_plane_issue "$slug")"
     __cc_write_sandbox_settings "$worktree" "$slug"
 
     # The worktree is brand new, so claude has never been told to trust it. Do
@@ -878,8 +914,11 @@ cc-build() {
     local -a __cc_perm_args
     __cc_perm_prepare build || return 1
 
+    # No reference: a build session's slug is the REPO NAME, so the derivation
+    # would have to be wrong to fire. A repo that happened to be named FOO-12
+    # is not a Plane issue. Empty, explicitly.
     __cc_write_mode_file "$repo_root" build "${repo_name}" "$repo_root" "$session_id" "${CC_PARENT_ID:-}" \
-        "$__cc_model_value" "$__cc_model_source" "$__cc_perm_value" "$__cc_perm_source"
+        "$__cc_model_value" "$__cc_model_source" "$__cc_perm_value" "$__cc_perm_source" ""
     # No trust pre-registration here: cc-build runs in the MAIN worktree the
     # operator is already sitting in, which is trusted by the time they can type
     # this. Only the wrappers that CREATE a directory need to vouch for it.
@@ -1105,8 +1144,9 @@ cc() {
     local -a __cc_perm_args
     __cc_perm_prepare ea || return 1
 
+    # Same reasoning as cc-build: the slug is `cc`, never a reference.
     __cc_write_mode_file "$cc_workspace" command-center cc "$cc_workspace" "$session_id" "" \
-        "$__cc_model_value" "$__cc_model_source" "$__cc_perm_value" "$__cc_perm_source"
+        "$__cc_model_value" "$__cc_model_source" "$__cc_perm_value" "$__cc_perm_source" ""
 
     __cc_log "COMMAND CENTER: session_id=$session_id model=$__cc_model_value ($__cc_model_source)"
 
@@ -1145,25 +1185,29 @@ cc-branch() {
     # is delivered into the child's window after launch via the AI_ST-40
     # paste-verify-Enter dance (__cc_deliver_brief), so an autonomous child
     # costs the EA zero manual touches on the happy path (AI_ST-72).
-    local task_id="" repo_arg="" brief_file=""
+    local task_id="" repo_arg="" brief_file="" issue_ref=""
     while [ $# -gt 0 ]; do
         case "$1" in
             --brief)
                 [ $# -ge 2 ] || { __cc_die "--brief needs a file"; return 1; }
                 brief_file="$2"; shift 2 ;;
             --brief=*) brief_file="${1#*=}"; shift ;;
-            -*) __cc_die "unknown option: $1 (usage: cc-branch [--brief <file>] <task-id> [<repo-path>])"; return 1 ;;
+            --issue)
+                [ $# -ge 2 ] || { __cc_die "--issue needs a reference (e.g. AI_ST-99)"; return 1; }
+                issue_ref="$2"; shift 2 ;;
+            --issue=*) issue_ref="${1#*=}"; shift ;;
+            -*) __cc_die "unknown option: $1 (usage: cc-branch [--brief <file>] [--issue <REF>] <task-id> [<repo-path>])"; return 1 ;;
             *)
                 if [ -z "$task_id" ]; then task_id="$1"
                 elif [ -z "$repo_arg" ]; then repo_arg="$1"
-                else __cc_die "too many arguments (usage: cc-branch [--brief <file>] <task-id> [<repo-path>])"; return 1
+                else __cc_die "too many arguments (usage: cc-branch [--brief <file>] [--issue <REF>] <task-id> [<repo-path>])"; return 1
                 fi
                 shift ;;
         esac
     done
 
     if [ -z "$task_id" ]; then
-        __cc_die "usage: cc-branch [--brief <file>] <task-id> [<repo-path>]"
+        __cc_die "usage: cc-branch [--brief <file>] [--issue <REF>] <task-id> [<repo-path>]"
         return 1
     fi
 
@@ -1171,6 +1215,14 @@ cc-branch() {
     # permission resolvers: a typo'd path must not leave a worktree behind.
     if [ -n "$brief_file" ] && [ ! -f "$brief_file" ]; then
         __cc_die "brief file not found: $brief_file"
+        return 1
+    fi
+
+    # Same rule as --brief and the model resolver: a typo'd reference must not
+    # leave a worktree, a branch or a tmux window behind. The shape is
+    # cc-plane-sync.sh's is_issue_ref().
+    if [ -n "$issue_ref" ] && ! [[ "$issue_ref" =~ ^[A-Z][A-Z0-9_]*-[0-9]+$ ]]; then
+        __cc_die "--issue must look like PROJECT-123 (got: $issue_ref)"
         return 1
     fi
 
@@ -1260,6 +1312,21 @@ cc-branch() {
     worktree="${repo_root%/*}/${repo_name}-branch-${task_id_safe}"
     branch="branch/${task_id}"
 
+    # Resolved once, here, so the log line and the .cc-mode cannot disagree.
+    local plane_stamp
+    plane_stamp=$(__cc_derive_plane_issue "$task_id" "$issue_ref")
+
+    # A task id that is itself issue-shaped and DISAGREES with --issue means
+    # the worktree, the tmux window and the task folder are named for one
+    # issue while board sync targets another. Legal and occasionally intended
+    # -- never silent: cc-continue derives the sandbox carveout from
+    # plane_issue, so the two names diverge for the rest of the task's life.
+    if [ -n "$issue_ref" ] && [[ "$task_id" =~ ^[A-Z][A-Z0-9_]*-[0-9]+$ ]] \
+       && [ "$issue_ref" != "$task_id" ]; then
+        __cc_log "WARNING: --issue $issue_ref differs from the issue-shaped task id $task_id;"
+        __cc_log "         worktree and window are named $task_id, board sync targets $issue_ref"
+    fi
+
     if [ -d "$worktree" ]; then
         __cc_log "worktree already exists at $worktree — reusing"
     else
@@ -1276,7 +1343,8 @@ cc-branch() {
     child_session_id=$(__cc_mint_session_id)
 
     __cc_write_mode_file "$worktree" branched "$task_id" "$repo_root" "$child_session_id" "$parent_session_id" \
-        "$__cc_model_value" "$__cc_model_source" "$__cc_perm_value" "$__cc_perm_source"
+        "$__cc_model_value" "$__cc_model_source" "$__cc_perm_value" "$__cc_perm_source" \
+        "$plane_stamp"
 
     # A cc-branch child is autonomous by construction: nobody is watching its
     # pane when it starts. Vouch for the worktree we just created so it cannot
@@ -1299,6 +1367,7 @@ cc-branch() {
     __cc_log "          worktree=$worktree"
     __cc_log "          model=$__cc_model_value ($__cc_model_source)"
     __cc_log "          perm-mode=${__cc_perm_value:-settings-default} ($__cc_perm_source)"
+    __cc_log "          plane_issue=${plane_stamp:-(none)}"
 
     # Identity travels via the worktree's .cc-mode.
     #
@@ -1440,7 +1509,8 @@ cc-doctor() {
 # Public wrappers depend on internal __cc_* helpers; export both so subshells
 # (e.g. `bash -c 'cc-explore foo'`) don't fail with "__cc_repo_root: not found".
 export -f __cc_color_or_plain __cc_die __cc_log __cc_repo_root __cc_mint_session_id \
-          __cc_mode_quote __cc_mode_unquote __cc_write_mode_file __cc_write_sandbox_settings \
+          __cc_mode_quote __cc_mode_unquote __cc_derive_plane_issue \
+          __cc_write_mode_file __cc_write_sandbox_settings \
           __cc_read_mode __cc_find_sandbox_settings \
           __cc_model_policy_path __cc_resolve_model __cc_model_prepare __cc_model_flag_str \
           __cc_resolve_perm __cc_perm_modes __cc_perm_stage __cc_perm_prepare __cc_perm_flag_str \

@@ -132,6 +132,36 @@ parent_repo=$( { grep '^parent_repo=' "$mode_file" || true; } | cut -d= -f2-)
 model=$( { grep '^model=' "$mode_file" || true; } | cut -d= -f2-)
 model_source=$( { grep '^model_source=' "$mode_file" || true; } | cut -d= -f2-)
 
+# plane_issue: this session's Plane reference, resolved OFFLINE by the same
+# precedence chain cc-plane-sync.sh applies, minus its --issue flag. The
+# numbering follows that file's header so the two read as one rule:
+#
+#   2. .cc-mode  plane_issue=REF
+#   3. <task folder>/plane.md   "plane: REF"
+#   4. slug, when it is already issue-shaped
+#
+# Resolving it HERE rather than at session-start Step 5a is what makes the
+# adopt path visible in the session that adopts: Step 3 writes this slot
+# BEFORE Step 5a runs, so a reference learned at 5a would not reach the tree
+# until the next session. No network call is made, and none is needed.
+#
+# Before AI_ST-99 the slot carried no reference at all and cmd_health
+# substituted task_id -- which is the slug -- so precedences 2 and 3 were
+# invisible to board health, and the check could not see any session whose
+# worktree was not named for its issue.
+plane_issue=$( { grep '^plane_issue=' "$mode_file" || true; } | cut -d= -f2-)
+tasks_dir="${CC_PLANE_TASKS_DIR:-$HOME/vault/20-surface/company/tasks}"
+if [ -z "$plane_issue" ] && [ -n "$slug" ] && [ -f "$tasks_dir/$slug/plane.md" ]; then
+    # awk reads the file directly and stops itself. No grep|head here: this
+    # script sets pipefail, and an early-exit consumer on the right of a pipe
+    # SIGPIPE-aborts once the producer outgrows a read block.
+    plane_issue=$(awk '/^plane:/ { sub(/^plane:[[:space:]]*/, ""); print; exit }' \
+                      "$tasks_dir/$slug/plane.md" 2>/dev/null || true)
+fi
+if [ -z "$plane_issue" ] && [[ "$slug" =~ ^[A-Z][A-Z0-9_]*-[0-9]+$ ]]; then
+    plane_issue="$slug"
+fi
+
 # Validate identifiers before interpolating into paths/heredocs. session_id
 # and parent_id must match the 22-hex format minted by __cc_mint_session_id;
 # parent_id may also legitimately be empty (root sessions). slug and mode
@@ -176,8 +206,24 @@ if ! [[ "$model_source" =~ ^[a-zA-Z0-9._:-]*$ ]]; then
     echo "WARN: malformed model_source in $mode_file (recording as empty)" >&2
     model_source=""
 fi
+# Same blank-with-a-WARN rule as the model stamp: losing the reference is worth
+# less than losing the session's tree presence.
+plane_issue=${plane_issue//$'\n'/}
+if [ -n "$plane_issue" ] && ! [[ "$plane_issue" =~ ^[A-Z][A-Z0-9_]*-[0-9]+$ ]]; then
+    echo "WARN: malformed plane_issue '$plane_issue' in $mode_file (recording as empty)" >&2
+    plane_issue=""
+fi
 
-# task_id: defaults to slug; Plane-backed tasks can be edited in the slot later.
+# task_id: the TREE's name for this lane. It stays the slug even when a Plane
+# reference exists, because the worktree directory, the tmux window and the
+# task folder are all named for the slug, and company-status, the reclaim gate
+# and cc-branch's duplicate-window refusal all key off this value. The Plane
+# reference travels in its own field, below.
+#
+# (The comment here previously said a Plane-backed slot "can be edited in the
+# slot later". It cannot: this script rewrites the slot from .cc-mode at every
+# session-start, so a hand edit survives until the next bookend run and no
+# longer. That is why the reference is produced rather than patched in.)
 task_id="$slug"
 
 slot="$HOME/vault/20-surface/company/tree/sessions/${session_id}.md"
@@ -225,6 +271,7 @@ write_slot_attempt() {
 session_id: $session_id
 parent_id: $parent_id
 task_id: $task_id
+plane_issue: $plane_issue
 slug: $slug
 mode: $mode
 status: running

@@ -215,4 +215,30 @@ assert_ne "outside a repo: non-zero" 0 "$T_RC"
 assert_eq "outside a repo: prints nothing" "" "$T_OUT"
 assert_eq "outside a repo: says nothing on stderr" "" "$T_ERR"
 
+# --- cc-branch --issue: refused before any side effect (AI_ST-99) ----------
+# The rule these share with --brief and the model resolver: a malformed
+# argument must leave NO worktree behind. Each case asserts the refusal AND
+# that the worktree path was never created.
+ISSUE_REPO=$(t_tmpdir) || t_fail "tmpdir"
+git -C "$ISSUE_REPO" init -q
+git -C "$ISSUE_REPO" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+ISSUE_WT="$(dirname "$ISSUE_REPO")/$(basename "$ISSUE_REPO")-branch-probe"
+
+t_run bash -c ". '$CC_FUNCTIONS_UNDER_TEST'; cc-branch --issue not-an-issue probe '$ISSUE_REPO'"
+assert_ne "--issue with a malformed reference refuses" "0" "$T_RC"
+assert_contains "the refusal shows the shape it wanted" "PROJECT-123" "$T_ERR"
+assert_contains "the refusal names the value it got" "not-an-issue" "$T_ERR"
+assert_eq "a refused --issue leaves no worktree" "absent" \
+    "$([ -d "$ISSUE_WT" ] && echo present || echo absent)"
+
+# --issue must be LAST for this to be the missing-value case: given
+# `--issue probe <repo>`, `probe` is consumed AS the value and the malformed
+# check above fires instead, so the case would pass for the wrong reason.
+t_run bash -c ". '$CC_FUNCTIONS_UNDER_TEST'; cc-branch probe '$ISSUE_REPO' --issue"
+assert_ne "--issue with no value refuses" "0" "$T_RC"
+assert_contains "the missing-value refusal explains itself" "needs a reference" "$T_ERR"
+
+t_run bash -c ". '$CC_FUNCTIONS_UNDER_TEST'; cc-branch --frobnicate probe '$ISSUE_REPO'"
+assert_contains "the usage line advertises --issue" "--issue" "$T_ERR"
+
 t_finish

@@ -59,6 +59,9 @@ SLOTS_DIR="${CC_PLANE_SLOTS_DIR:-$VAULT/tree/sessions}"
 # point it at a loopback fake so the HTTP layer can be exercised without a
 # live Plane. Never point it at the real instance from a test.
 PLANE_BASE="${CC_PLANE_BASE:-http://plane.homelab/api/v1}"
+# The web origin, for the URL adopt records in plane.md. Derived rather than
+# hardcoded so the loopback fake in the tests yields a consistent URL.
+PLANE_WEB="${PLANE_BASE%/api/v1}"
 WORKSPACE="${CC_PLANE_WORKSPACE:-homelab}"
 
 # Staleness thresholds (convention S4). Environment-overridable for a one-off
@@ -84,6 +87,10 @@ Subcommands:
   health [--workspace W]  The two read-only staleness checks. Never mutates
                           anything. Prints one board-health line per project
                           plus the findings.
+  adopt <REF>             Link an EXISTING issue to this session: writes
+                          `plane: <REF>` into the task folder's plane.md and
+                          plane_issue=<REF> into .cc-mode. Verifies the issue
+                          exists first; never creates one.
 
 Options:
   --issue <REF>           Force the issue reference (e.g. INFRA-41), skipping
@@ -96,6 +103,9 @@ Options:
   --workspace <slug>      Plane workspace slug (default: homelab).
   --dry-run               Resolve and report what would be written; write
                           nothing. Applies to `start` and `finish`.
+  --print-ref             Print the reference the identity chain resolved and
+                          exit 0, before any network or auth work. Empty
+                          output means no reference, which is a legal answer.
   -h, --help              Show this help.
 
 Exit status is 0 for every network, auth, or lookup failure -- these warn and
@@ -106,13 +116,39 @@ USAGE
 warn() { printf 'plane-sync: WARN %s\n' "$*" >&2; }
 say()  { printf 'plane-sync: %s\n' "$*"; }
 
+# An option whose value is missing must say so, not die on `shift 2` under
+# `set -e` with an empty message. Defined here, above the subcommand case,
+# because `adopt` takes a positional value and validates it there.
+need_val() {  # need_val <flag> <value...>
+    [ $# -ge 2 ] && [ -n "$2" ] && return 0
+    printf 'plane-sync: %s requires a value\n' "$1" >&2
+    exit 2
+}
+
+# Defined ABOVE the argument parser because `adopt` validates its reference
+# there, before any side effect. One regex in this file, not two -- the drift
+# between two copies of this rule is what AI_ST-99 exists to end.
+is_issue_ref() {  # PROJECTKEY-123
+    [[ "$1" =~ ^[A-Z][A-Z0-9_]*-[0-9]+$ ]]
+}
+
 # ---- argument parsing (before any network work) ----------------------------
 
+ADOPT_REF=""
 SUBCMD="${1:-}"
 [ -n "$SUBCMD" ] || { usage >&2; exit 2; }
 case "$SUBCMD" in
     -h|--help) usage; exit 0 ;;
     resolve|start|finish|health) shift ;;
+    adopt)
+        need_val adopt "${2:-}"
+        ADOPT_REF="$2"
+        if ! is_issue_ref "$ADOPT_REF"; then
+            printf 'plane-sync: adopt needs a reference like PROJECT-123 (got: %s)\n' \
+                "$ADOPT_REF" >&2
+            exit 2
+        fi
+        shift 2 ;;
     *) printf 'plane-sync: unknown subcommand: %s\n\n' "$SUBCMD" >&2; usage >&2; exit 2 ;;
 esac
 
@@ -126,15 +162,7 @@ if [ "$SUBCMD" = finish ]; then
     esac
 fi
 
-ISSUE_REF=""; NOTE=""; MODE_FILE=""; ASSERT_SESSION=""; DRY_RUN=0
-
-# An option whose value is missing must say so, not die on `shift 2` under
-# `set -e` with an empty message.
-need_val() {  # need_val <flag> <value...>
-    [ $# -ge 2 ] && [ -n "$2" ] && return 0
-    printf 'plane-sync: %s requires a value\n' "$1" >&2
-    exit 2
-}
+ISSUE_REF=""; NOTE=""; MODE_FILE=""; ASSERT_SESSION=""; DRY_RUN=0; PRINT_REF=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -144,6 +172,7 @@ while [ $# -gt 0 ]; do
         --session-id) need_val "$@"; ASSERT_SESSION="$2"; shift 2 ;;
         --workspace)  need_val "$@"; WORKSPACE="$2"; shift 2 ;;
         --dry-run)    DRY_RUN=1; shift ;;
+        --print-ref)  PRINT_REF=1; shift ;;
         -h|--help)    usage; exit 0 ;;
         *) printf 'plane-sync: unexpected argument: %s\n' "$1" >&2; usage >&2; exit 2 ;;
     esac
@@ -173,10 +202,6 @@ mode_get() {  # mode_get <key> <file>
     awk -v k="$1" 'index($0, k "=") == 1 { print substr($0, length(k) + 2); exit }' "$2"
 }
 
-is_issue_ref() {  # PROJECTKEY-123
-    [[ "$1" =~ ^[A-Z][A-Z0-9_]*-[0-9]+$ ]]
-}
-
 MODEF=$(find_mode_file || true)
 SESSION_ID=""; SLUG=""
 if [ -n "$MODEF" ]; then
@@ -203,6 +228,23 @@ if [ -z "$ISSUE_REF" ] && [ -n "$SLUG" ] && is_issue_ref "$SLUG"; then
     ISSUE_REF="$SLUG"                                    # precedence 4
 fi
 
+# --print-ref: report the reference this chain just resolved, and stop.
+#
+# Read-only by construction -- it exits before the API layer below, so it needs
+# neither a key nor a network. It exists because the four precedences above are
+# the ONLY implementation of this rule in this file, and
+# tests/test_slot_plane_issue.sh has to compare them against
+# cc-tree-slot-write.sh's copy. `resolve` cannot serve: its identity report
+# sits below the auth gate in the python block, so a keyless run prints
+# nothing. Printing $ISSUE_REF here reports the chain rather than
+# re-implementing it.
+#
+# Empty output means "no reference", which is a legal answer, not a failure.
+if [ "$PRINT_REF" = 1 ]; then
+    printf '%s\n' "$ISSUE_REF"
+    exit 0
+fi
+
 # ---- the API layer ---------------------------------------------------------
 # All HTTP lives in one python3 block: JSON in bash is a bug farm, and python3
 # is already a hard dependency (the API key can only be read from JSON).
@@ -218,6 +260,11 @@ run_api() {
     CC_PS_SLOTS_DIR="$SLOTS_DIR" \
     CC_PS_STARTED_QUIET="$STARTED_QUIET_DAYS" \
     CC_PS_BACKLOG_QUIET="$BACKLOG_QUIET_DAYS" \
+    CC_PS_ADOPT_REF="$ADOPT_REF" \
+    CC_PS_MODEF="$MODEF" \
+    CC_PS_TASKS_DIR="$TASKS_DIR" \
+    CC_PS_SLUG="$SLUG" \
+    CC_PS_WEB="$PLANE_WEB" \
     no_proxy="" NO_PROXY="" python3 - <<'PYEOF'
 import json, os, sys, urllib.request, urllib.error, datetime, time
 
@@ -231,6 +278,11 @@ DRY       = os.environ.get("CC_PS_DRY_RUN") == "1"
 SLOTS     = os.environ["CC_PS_SLOTS_DIR"]
 STARTED_QUIET = int(os.environ.get("CC_PS_STARTED_QUIET", "7"))
 BACKLOG_QUIET = int(os.environ.get("CC_PS_BACKLOG_QUIET", "21"))
+ADOPT_REF = os.environ.get("CC_PS_ADOPT_REF", "")
+MODEF     = os.environ.get("CC_PS_MODEF", "")
+TASKS     = os.environ.get("CC_PS_TASKS_DIR", "")
+SLUG      = os.environ.get("CC_PS_SLUG", "")
+PLANE_WEB = os.environ.get("CC_PS_WEB", "")
 
 def warn(m): print("plane-sync: WARN %s" % m, file=sys.stderr)
 def say(m):  print("plane-sync: %s" % m)
@@ -446,6 +498,66 @@ def cmd_finish():
     say("%s: now %s (%s), %d comment(s) — verified by re-fetch"
         % (REF, now.get("name", "?"), now.get("group", "?"), ncomments))
 
+def cmd_adopt():
+    """Link an EXISTING issue to this session. Writes both halves.
+
+    Verified first, written second. An unverified reference written into
+    .cc-mode propagates into the tree slot and from there into the health
+    check that reads it -- a bad link is worse than no link, because the
+    check would then report a session on an issue that does not exist. On any
+    network or auth failure this warns and writes NOTHING, and still exits 0:
+    a bookend is never blocked on Plane."""
+    ref = ADOPT_REF
+    proj, issue = find_issue(ref)          # raises SoftFail -> warn, exit 0
+    url = "%s/%s/projects/%s/issues/%s" % (
+        PLANE_WEB, WS, proj["id"], issue["id"])
+
+    wrote = []
+
+    # Half one: the vault -> Plane back-reference, precedence 3.
+    if SLUG:
+        folder = os.path.join(TASKS, SLUG)
+        try:
+            os.makedirs(folder, exist_ok=True)
+            with open(os.path.join(folder, "plane.md"), "w") as fh:
+                fh.write("plane: %s\nplane_url: %s\n" % (ref, url))
+            wrote.append(os.path.join(folder, "plane.md"))
+        except OSError as e:
+            warn("could not write the task-folder back-reference: %s" % e)
+
+    # Half two: .cc-mode, precedence 2. REPLACE the existing line rather than
+    # appending -- __cc_write_mode_file emits a plane_issue= line on every
+    # launch (empty when there is no reference), so appending would leave two.
+    # A reference matching ^[A-Z][A-Z0-9_]*-[0-9]+$ is entirely inside the
+    # .cc-mode bare-value safe set, so it needs no quoting.
+    if MODEF and os.path.isfile(MODEF):
+        try:
+            with open(MODEF) as fh:
+                lines = fh.read().splitlines()
+            out, seen = [], False
+            for ln in lines:
+                if ln.startswith("plane_issue="):
+                    out.append("plane_issue=%s" % ref)
+                    seen = True
+                else:
+                    out.append(ln)
+            if not seen:
+                out.append("plane_issue=%s" % ref)
+            with open(MODEF, "w") as fh:
+                fh.write("\n".join(out) + "\n")
+            wrote.append(MODEF)
+        except OSError as e:
+            warn("could not back-fill .cc-mode: %s" % e)
+
+    if wrote:
+        say("adopted %s (%s) — wrote %s" % (ref, issue.get("name", "?")[:50],
+                                            ", ".join(wrote)))
+        say("the tree slot picks this up at the next session-start; "
+            "run `bash ~/.claude/cc-tree-slot-write.sh` now to stamp it today")
+    else:
+        warn("adopted nothing — neither the task folder nor .cc-mode was writable")
+
+
 def cmd_health():
     """Two read-only checks (convention S4). Mutates nothing, ever.
 
@@ -453,8 +565,18 @@ def cmd_health():
     (INFRA-72): the company does not work in sprints, so the check fired 7
     identical WARNs per run against a decision already made. The historical
     cycles remain on the server as an archive; health just never asks."""
-    # Fleet side: what the tree says is live, from task_id on running slots.
-    live = {}
+    # Fleet side: what the tree says is live. The reference is the slot's
+    # explicit plane_issue (AI_ST-99); task_id is the pre-AI_ST-99 fallback,
+    # kept so slots written by an older cc-tree-slot-write.sh keep counting.
+    #
+    # Before AI_ST-99 this read task_id ONLY -- which is the slug -- so the
+    # check implemented precedence 4 of this file's own four-precedence
+    # identity chain and nothing else. Sessions linked by .cc-mode or by a
+    # task folder's plane.md were invisible to it, as was every launcher that
+    # does not name the worktree after the issue (cc-build, the command
+    # centre, any descriptive slug). Measured 2026-09-10: 1 of 2 running
+    # sessions counted. The counts below are what make that visible.
+    live, running_slots, linked = {}, 0, 0
     try:
         for fn in sorted(os.listdir(SLOTS)):
             if not fn.endswith(".md"):
@@ -471,13 +593,17 @@ def cmd_health():
                             fm[k.strip()] = v.strip()
             except OSError:
                 continue
-            tid = fm.get("task_id", "")
-            if fm.get("status") == "running" and tid:
-                key, _, num = tid.rpartition("-")
-                if key and num.isdigit():
-                    live.setdefault(tid, []).append(fm.get("session_id", fn))
+            if fm.get("status") != "running":
+                continue
+            running_slots += 1
+            ref = fm.get("plane_issue", "") or fm.get("task_id", "")
+            key, _, num = ref.rpartition("-")
+            if ref and key and num.isdigit():
+                live.setdefault(ref, []).append(fm.get("session_id", fn))
+                linked += 1
     except OSError as e:
         warn("cannot read tree slots (%s) — check 3 skipped" % e)
+        running_slots = linked = 0
 
     findings = []
     for proj in projects():
@@ -521,7 +647,13 @@ def cmd_health():
         behind = proj_live - started_refs        # live session, issue not started
         zombie = in_progress_refs - proj_live    # In Progress issue, no live session
 
-        flag = "OK " if not behind else "WARN"
+        # The summary must not contradict the detail beneath it. `zombie`
+        # emits a finding on the very next lines, and before AI_ST-99 the
+        # board line above it still read OK -- a clean the run had already
+        # disproved. stale_started and stale_backlog stay out of the flag on
+        # purpose: they have their own columns and a long backlog is a triage
+        # question, not a board-vs-fleet disagreement.
+        flag = "OK " if not behind and not zombie else "WARN"
         say("%s board health: %s %d started | %d live session(s) | "
             "%d stale-started | %d stale-backlog"
             % (ident, flag,
@@ -536,6 +668,14 @@ def cmd_health():
             findings.append("%s: %s-%s started but quiet %d days — %s"
                             % (ident, ident, i.get("sequence_id"), d, i.get("name", "?")[:60]))
 
+    # Say how much of the fleet this check could see. A board-health run that
+    # reports OK without stating its coverage is how a false clean survives:
+    # one linked session and one unlinked reads exactly like two linked.
+    print()
+    say("fleet coverage: %d running slot(s), %d carrying a Plane reference, "
+        "%d unlinked (board health cannot see the unlinked)"
+        % (running_slots, linked, running_slots - linked))
+
     if findings:
         print()
         say("findings (report-only — this subcommand never mutates anything):")
@@ -546,7 +686,7 @@ def cmd_health():
         say("no findings")
 
 try:
-    {"resolve": cmd_resolve, "start": cmd_start,
+    {"resolve": cmd_resolve, "start": cmd_start, "adopt": cmd_adopt,
      "finish": cmd_finish, "health": cmd_health}[SUB]()
 except SoftFail as e:
     warn("%s — continuing; the bookend is not blocked on Plane" % e)

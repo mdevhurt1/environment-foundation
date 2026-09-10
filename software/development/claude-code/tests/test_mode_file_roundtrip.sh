@@ -62,8 +62,8 @@ t_begin "__cc_write_mode_file / __cc_read_mode round-trip"
 
 # Positional contract of __cc_write_mode_file, for reading the calls below:
 #   1 dir  2 mode  3 slug  4 parent_repo  5 session_id  6 parent_id
-#   7 model  8 model_source  9 perm_mode  10 perm_mode_source
-EXPECTED_KEYS='mode slug started_at parent_repo session_id parent_id model model_source perm_mode perm_mode_source'
+#   7 model  8 model_source  9 perm_mode  10 perm_mode_source  11 plane_issue
+EXPECTED_KEYS='mode slug started_at parent_repo session_id parent_id model model_source perm_mode perm_mode_source plane_issue'
 
 # read_by_source <file> -- source the file in a clean subprocess; print the
 # fields as "key=<value>" lines on stdout, and let the subprocess's own stderr
@@ -83,7 +83,7 @@ read_by_source() {
         set +u
         . "$1"; __src_rc=$?
         for k in mode slug started_at parent_repo session_id parent_id \
-                 model model_source perm_mode perm_mode_source; do
+                 model model_source perm_mode perm_mode_source plane_issue; do
             eval "printf %s=%s\\\\n \"\$k\" \"\${$k}\""
         done
         printf "__rc=%s\\n" "$__src_rc"
@@ -110,7 +110,7 @@ D=$(t_tmpdir) || { t_fail "tmpdir"; t_finish; exit 1; }
 __cc_write_mode_file "$D" branched INFRA-39 /home/u/repo sess001 par001 \
     opus policy:branched-worker "" settings-default
 
-assert_eq "writes exactly 10 lines" 10 "$(wc -l < "$D/.cc-mode")"
+assert_eq "writes exactly 11 lines" 11 "$(wc -l < "$D/.cc-mode")"
 assert_eq "writes exactly the expected keys, in order" \
     "$EXPECTED_KEYS" "$(cut -d= -f1 < "$D/.cc-mode" | tr '\n' ' ' | sed 's/ $//')"
 
@@ -174,7 +174,7 @@ assert_eq "reader C: model_source keeps its colon" \
 D2=$(t_tmpdir) || { t_fail "tmpdir"; t_finish; exit 1; }
 __cc_write_mode_file "$D2" branched ok /repo 'sid=injected' 'pid=also=injected' \
     opus policy:x "" settings-default
-assert_eq "'=' in a value: still exactly 10 lines" 10 "$(wc -l < "$D2/.cc-mode")"
+assert_eq "'=' in a value: still exactly 11 lines" 11 "$(wc -l < "$D2/.cc-mode")"
 assert_eq "'=' in a value: no key was injected" \
     "$EXPECTED_KEYS" "$(cut -d= -f1 < "$D2/.cc-mode" | tr '\n' ' ' | sed 's/ $//')"
 # The value survives now instead of being deleted through. A '=' is only
@@ -188,7 +188,7 @@ assert_eq "'=' in a value: parent_id keeps BOTH of its '=' characters" \
 D3=$(t_tmpdir) || { t_fail "tmpdir"; t_finish; exit 1; }
 __cc_write_mode_file "$D3" branched ok /repo "$(printf 'sid\nmode=build')" \
     "$(printf 'pid\nparent_repo=/elsewhere')" opus policy:x "" settings-default
-assert_eq "newline scrub: still exactly 10 lines" 10 "$(wc -l < "$D3/.cc-mode")"
+assert_eq "newline scrub: still exactly 11 lines" 11 "$(wc -l < "$D3/.cc-mode")"
 assert_eq "newline scrub: mode was not overwritten" "branched" "$(read_by_cut "$D3/.cc-mode" mode)"
 assert_eq "newline scrub: parent_repo was not overwritten" "/repo" "$(read_by_cut "$D3/.cc-mode" parent_repo)"
 
@@ -412,11 +412,11 @@ CANARY="$D_CANARY/EXECUTED"
 # its neighbour is visible in the diagnostic rather than merely absent.
 #              0=mode    1=slug   2=parent_repo  3=session_id  4=parent_id
 #              5=model   6=model_source          7=perm_mode   8=perm_mode_source
-Q_DEFAULT=(branched okslug /home/u/repo sidgood pidgood opus policy:role acceptEdits settings-default)
-Q_KEY=(mode slug parent_repo session_id parent_id model model_source perm_mode perm_mode_source)
+Q_DEFAULT=(branched okslug /home/u/repo sidgood pidgood opus policy:role acceptEdits settings-default TST-1)
+Q_KEY=(mode slug parent_repo session_id parent_id model model_source perm_mode perm_mode_source plane_issue)
 
 # q_write <dir> <index0> <value> -- write a .cc-mode whose <index0> field holds
-# <value> and whose other eight fields hold their known-good filler.
+# <value> and whose other nine fields hold their known-good filler.
 q_write() {
     local dir="$1" idx="$2" val="$3"
     local -a a
@@ -439,13 +439,14 @@ q_contract() {
 
     q_write "$d" "$idx" "$val"
 
-    # 1. The file is still ten lines carrying exactly the ten expected keys, in
+    # 1. The file is still eleven lines carrying exactly the eleven expected
+    #    keys, in
     #    order. A value that grew a line, or that renamed/injected a key, fails
     #    here before anything else is examined.
     local lines keys
     lines=$(wc -l < "$d/.cc-mode")
     keys=$(cut -d= -f1 < "$d/.cc-mode" | tr '\n' ' ' | sed 's/ $//')
-    [ "$lines" = 10 ] || bad="$bad line-count($lines)"
+    [ "$lines" = 11 ] || bad="$bad line-count($lines)"
     [ "$keys" = "$EXPECTED_KEYS" ] || bad="$bad key-set"
 
     # 2. Reader A sources it in silence. Any diagnostic on stderr means the
@@ -525,9 +526,10 @@ Q_NL_WANT='aparent_id=$(touch '"$CANARY"')b'
 # and position is exactly what defect 2 exploits: an unterminated quote damages
 # everything BELOW its line and nothing above it. So the table runs at the
 # first line (mode), the middle (session_id -- the line the reproduction in the
-# brief used), and the last (perm_mode_source), which brackets the blast
-# radius. Field-by-field coverage follows in 9b.
-for POS in 0 3 8; do
+# brief used), and the last (plane_issue -- AI_ST-99 added an 11th line, so
+# "last" moved), which brackets the blast radius. Field-by-field coverage
+# follows in 9b.
+for POS in 0 3 9; do
     while IFS=$'\t' read -r qname qval qwant; do
         [ -n "$qname" ] || continue
         q_contract "$POS" "$qname" "$qval" "$qwant"
@@ -540,7 +542,7 @@ done
 #
 # Every metacharacter at once, so no field is left holding only the easy cases.
 Q_ALL="a b'c\"d\`touch $CANARY\`e\$(touch $CANARY)f\${HOME}g=h;i|j>k\\l"
-for POS in 0 1 2 3 4 5 6 7 8; do
+for POS in 0 1 2 3 4 5 6 7 8 9; do
     q_contract "$POS" "the composite hostile value" "$Q_ALL" "$Q_ALL"
 done
 
@@ -611,7 +613,7 @@ q_eval_roundtrip "$Q_ALL"         "the composite hostile value"
 # accident.
 D_WIRE=$(t_tmpdir) || { t_fail "tmpdir"; t_finish; exit 1; }
 __cc_write_mode_file "$D_WIRE" branched INFRA-45 /home/u/repo \
-    sid pid opus policy:branched-worker "" settings-default
+    sid pid opus policy:branched-worker "" settings-default INFRA-45
 assert_eq "wire format: a real branched launch is written entirely bare" \
     "mode=branched
 slug=INFRA-45
@@ -621,7 +623,8 @@ parent_id=pid
 model=opus
 model_source=policy:branched-worker
 perm_mode=
-perm_mode_source=settings-default" \
+perm_mode_source=settings-default
+plane_issue=INFRA-45" \
     "$(grep -v '^started_at=' "$D_WIRE/.cc-mode")"
 
 # ---- 9e. the reproduction from the brief, verbatim ----------------------
@@ -669,5 +672,37 @@ else
     t_pass "defect 3: still inert after three repaints' worth of sourcing"
 fi
 rm -f "$CANARY"
+
+# --- plane_issue: derivation and the empty-is-legal line (AI_ST-99) --------
+# The field is written on EVERY launch, empty when there is no reference, for
+# the same reason perm_mode is: a fixed field list is what lets the six
+# `grep '^key=' | cut -d= -f2-` readers stay as they are.
+D4=$(t_tmpdir) || t_fail "tmpdir"
+__cc_write_mode_file "$D4" branched some-slug /repo aaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbb \
+    opus policy:branched-worker "" settings-default ""
+assert_contains "no reference writes an empty plane_issue line" \
+    "plane_issue=" "$(cat "$D4/.cc-mode")"
+assert_eq "empty plane_issue is still exactly 11 lines" 11 "$(wc -l < "$D4/.cc-mode")"
+
+D5=$(t_tmpdir) || t_fail "tmpdir"
+__cc_write_mode_file "$D5" branched AI_ST-99 /repo aaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbb \
+    opus policy:branched-worker "" settings-default AI_ST-99
+assert_contains "a reference is written bare (it is in the safe set)" \
+    "plane_issue=AI_ST-99" "$(cat "$D5/.cc-mode")"
+
+assert_eq "derive: an issue-shaped task id is its own reference" \
+    "AI_ST-99" "$(__cc_derive_plane_issue AI_ST-99)"
+assert_eq "derive: a descriptive slug yields nothing" \
+    "" "$(__cc_derive_plane_issue plane-system-of-record)"
+assert_eq "derive: a repo name yields nothing" \
+    "" "$(__cc_derive_plane_issue environment-foundation)"
+assert_eq "derive: an explicit reference wins over the task id" \
+    "INFRA-41" "$(__cc_derive_plane_issue AI_ST-99 INFRA-41)"
+assert_eq "derive: an explicit reference works with a descriptive slug" \
+    "INFRA-41" "$(__cc_derive_plane_issue plane-system-of-record INFRA-41)"
+assert_eq "derive: lowercase is not issue-shaped" \
+    "" "$(__cc_derive_plane_issue ai_st-99)"
+assert_eq "derive: a trailing non-digit is not issue-shaped" \
+    "" "$(__cc_derive_plane_issue AI_ST-99a)"
 
 t_finish

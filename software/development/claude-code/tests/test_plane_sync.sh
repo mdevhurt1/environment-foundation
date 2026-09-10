@@ -422,6 +422,49 @@ assert_contains "coverage names the blind spot" \
     "1 unlinked" "$T_OUT"
 rm -f "$SLOTS/sess-unlinked.md" "$SLOTS/sess-desc.md"
 
+# --- adopt: writes both halves of the back-reference (AI_ST-99) ------------
+# The mechanism has existed since the convention shipped and adoption stood at
+# 1 task folder in 138. adopt is the missing verb: it writes the folder's
+# plane.md AND back-fills .cc-mode, so the link survives both this session and
+# the next one.
+ADOPT_MODE="$FIX/adopt.cc-mode"
+printf 'mode=branched\nslug=adopt-me\nstarted_at=x\nparent_repo=/r\nsession_id=cccccccccccccccccccccc\nparent_id=\nmodel=\nmodel_source=\nperm_mode=\nperm_mode_source=\nplane_issue=\n' \
+    > "$ADOPT_MODE"
+mkdir -p "$TASKS/adopt-me"
+
+t_run run_sync "$BASE" -- adopt TST-12 --mode-file "$ADOPT_MODE"
+assert_eq "adopt exits 0" "0" "$T_RC"
+assert_contains "adopt names both files it wrote" "plane.md" "$T_OUT"
+assert_contains "the folder back-reference is written" \
+    "plane: TST-12" "$(cat "$TASKS/adopt-me/plane.md" 2>/dev/null)"
+assert_contains "the folder back-reference carries a URL" \
+    "plane_url:" "$(cat "$TASKS/adopt-me/plane.md" 2>/dev/null)"
+assert_contains "the empty .cc-mode line is REPLACED, not duplicated" \
+    "plane_issue=TST-12" "$(cat "$ADOPT_MODE")"
+assert_eq "the .cc-mode still has exactly one plane_issue line" "1" \
+    "$(grep -c '^plane_issue=' "$ADOPT_MODE")"
+assert_eq "the .cc-mode is still 11 lines" "11" "$(wc -l < "$ADOPT_MODE")"
+
+# Idempotent: running it again changes nothing and does not append.
+t_run run_sync "$BASE" -- adopt TST-12 --mode-file "$ADOPT_MODE"
+assert_eq "re-adopting the same reference exits 0" "0" "$T_RC"
+assert_eq "re-adopting does not duplicate the line" "1" \
+    "$(grep -c '^plane_issue=' "$ADOPT_MODE")"
+
+# A reference the board does not hold must not be written anywhere. An
+# unverified reference is how a bad link propagates into the tree and the
+# health check that reads it.
+t_run run_sync "$BASE" -- adopt TST-9999 --mode-file "$ADOPT_MODE"
+assert_eq "adopting an unknown issue still exits 0 (fail-soft)" "0" "$T_RC"
+assert_not_contains "an unknown issue is not written to .cc-mode" \
+    "TST-9999" "$(cat "$ADOPT_MODE")"
+
+# Usage: refused before any request, like every other usage error here.
+t_run run_sync X=1 -- adopt
+assert_eq "adopt without a reference refuses with exit 2" "2" "$T_RC"
+t_run run_sync X=1 -- adopt not-an-issue
+assert_eq "adopt with a malformed reference refuses with exit 2" "2" "$T_RC"
+
 kill "$SERVER_PID" 2>/dev/null
 wait "$SERVER_PID" 2>/dev/null
 SERVER_PID=""

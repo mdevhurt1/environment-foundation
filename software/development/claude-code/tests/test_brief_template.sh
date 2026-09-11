@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Description: The canonical dispatch-brief template carries the board-discipline clauses the convention requires (AI_ST-99) — the bookend carve-out naming the helper, the per-bookend-step re-check that INFRA-86 failed without, and the never-revert rule.
+# Description: The canonical dispatch-brief template carries the standing clauses the conventions require — board discipline (AI_ST-99: bookend carve-out, per-step re-check, never-revert), fork/subagent negative scope (AI_ST-101), and the staged-command host-guard pointer (AI_ST-100).
 # Profiles:    workstation, workplace
 # Platforms:   ubuntu-24.04, ubuntu-22.04 (WSL supported)
 # Dependencies: bash 4+, coreutils
@@ -38,5 +38,36 @@ assert_contains "the never-revert rule is stated" \
     "never revert it" "$body"
 assert_contains "a landed bookend write is named in the completion event" \
     "completion event" "$body"
+
+# Fork/subagent negative-scope clause (AI_ST-101 item 3). Learned from the
+# 2026-09-11 enpm703-review incident: two read-only forks redid the whole
+# task, bypassed a Write refusal via Bash heredoc, and emitted completion
+# events under the dispatcher's identity.
+assert_contains "the fork clause states the full negative scope" \
+    "no writes, no memory edits, no event emission" "$body"
+assert_contains "the fork clause reserves the dispatcher's identity" \
+    "dispatcher's identity is not yours to stamp" "$body"
+assert_contains "a Write refusal is never re-attempted via another tool" \
+    "never to be" "$body"
+assert_contains "the refusal rule names the bypass route it forbids" \
+    "re-attempted through Bash" "$body"
+assert_contains "the fork clause cites its incident ticket" \
+    "AI_ST-101" "$body"
+assert_contains "the fork clause requires a post-completion side-effect check" \
+    "check for side effects" "$body"
+
+# Staged-command host-guard pointer (AI_ST-100): one sentence + pointer,
+# not a duplicate of the guard block — the block lives in
+# staged-commands.md (linted by test_staged_commands_template.sh).
+assert_contains "the staged-commands section points at the guard template" \
+    "templates/staged-commands.md" "$body"
+assert_contains "the pointer covers cross-machine copy or mutation staging" \
+    "stages cross-machine copy or" "$body"
+assert_contains "the pointer names the guard's two checks" \
+    "hostname pin plus" "$body"
+assert_contains "the pointer cites its incident ticket" \
+    "AI_ST-100" "$body"
+assert_not_contains "the brief does not duplicate the guard block itself" \
+    'echo WRONG-MACHINE; exit 1' "$body"
 
 t_finish

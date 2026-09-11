@@ -43,6 +43,24 @@ your reads reference it; record the collision in your report and move on.
 Do not edit {{explicitly closed surfaces, e.g. command-center CLAUDE.md,
 vault outside your task folder}}.
 
+## Subagents and forks
+
+Any fork or subagent you dispatch inherits your full context and tool
+access — your `.cc-mode`, your session identity, your emit helper —
+and nothing but your prompt confines it (observed twice on 2026-09-11,
+AI_ST-101: narrow read-only forks redid the whole task, wrote files
+after a refusal, and emitted completion events as their dispatcher).
+State the negative scope explicitly and loudly in every dispatch
+prompt: **no writes, no memory edits, no event emission; the
+dispatcher's identity is not yours to stamp** — findings come back as
+final-message text only. A Write-tool refusal is never to be
+re-attempted through Bash or any other tool: a permission denial is
+intent, not plumbing, and a subagent that reports routing around one is
+a red flag to disclose upward, not a quirk to shrug off. After any fork
+completes, check for side effects beyond its returned text — `git
+status` on what it could reach, your own events dir — before trusting
+"done".
+
 ## Environment — probe, don't believe
 
 This brief asserts **no environment constants**. Every recurring claim
@@ -80,6 +98,13 @@ re-stamp or delete when re-verified):
   replaces whole files).
 <!-- EA: add task-specific dated claims here, each with its stamp. A
      claim you cannot stamp goes in as a probe or not at all. -->
+
+## Staged commands
+
+Any brief — or hand-back within one — that stages cross-machine copy or
+mutation commands for a human to run must instantiate the host-guard
+preamble from `templates/staged-commands.md` (hostname pin plus
+staging-time hash check; AI_ST-100), not restate or abbreviate it.
 
 ## Board discipline
 

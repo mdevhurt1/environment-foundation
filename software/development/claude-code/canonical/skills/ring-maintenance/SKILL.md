@@ -18,6 +18,7 @@ Run weekly from the EA (command-center) session.
 - [ ] Step 2a: Run the board-health check (read-only)
 - [ ] Step 3: Phase 1 — dispatch the read-only GC subagent
 - [ ] Step 4: Phase 1 — execute auto fixes, confirm proposals
+- [ ] Step 4a: Phase 1 — regenerate the indexes (moves are done, links must follow)
 - [ ] Step 5: Phase 2 — walk the promotion queue with the CEO
 - [ ] Step 6: Write the health report
 - [ ] Step 7: Stamp the last-run marker
@@ -90,6 +91,17 @@ stdout: `## metrics`, `## auto.index_add`, `## auto.index_drop`,
 half of Step 6's before-→-after table. Every other section is rows of
 tab-separated fields, one finding per line, empty when there is nothing to
 report.
+
+Then take the graph's "before" number — the count of notes with no resolved
+wikilink in or out, `.events/` directories excluded the way the graph
+excludes them:
+
+```bash
+bash ~/.claude/cc-index-regen.sh --measure
+```
+
+Strictly read-only in this mode. Keep the line: Step 4a takes the matching
+"after", and Step 6's table carries both (INFRA-91).
 
 Default thresholds are `SLOT_AGE_DAYS=14`, `TASK_AGE_DAYS=30`,
 `BRIEF_AGE_DAYS=30`, `HEALTH_KEEP=8`. All four are environment overrides on
@@ -344,6 +356,40 @@ remit. Globs and wildcards are never used for a move, whatever the row count.
 Nothing is ever hard-deleted, at any tier, anywhere. Every "removal" this
 skill performs is a move into an `_archive/` and is recoverable.
 
+## Step 4a: Phase 1 — regenerate the indexes
+
+Moves are done; links must follow. Every archive move in Step 4 turns the
+path-bearing index link that pointed at the moved note into a dead link and
+leaves the note with no incoming link at all — by 2026-09-16 the passes had
+left 1,092 dead links across the five generated indexes and 471 notes
+disconnected from the graph (INFRA-91). The indexes are generated, never
+hand-edited, so the fix is one command after the last move of the run:
+
+```bash
+bash ~/.claude/cc-index-regen.sh --dry-run   # what would change; writes nothing
+bash ~/.claude/cc-index-regen.sh             # rewrites only the indexes whose listing changed
+bash ~/.claude/cc-index-regen.sh --measure   # the "after" number for Step 6
+```
+
+It rebuilds exactly five files from disk — `tree/_index.md`,
+`tree/sessions/_archive/_index.md`, `tasks/_index.md`,
+`tasks/_archive/_index.md`, `_command-center/_index.md` — one path-bearing
+link per note under each root, grouped by `task_id`, `.events/` directories
+skipped (they are hidden from the graph by the vault's Excluded-files
+filter, not indexed). It writes nothing else, creates no directory (an
+`_archive/` that does not exist yet is reported as a skip, not made), and
+rewrites an index only when its listing changed, so `generated:` reads as
+the date the listing last moved and a second run is a no-op. Exit 2 means
+the vault is not mounted — the Step 1 gate was missed.
+
+**Gated on the same fresh Obsidian check as the moves.** Run it when the
+run's moves ran. If Step 4's re-check reported `CLOSED` and no move was made,
+there is no moved note to re-link — skip this step and let the next
+open-Obsidian pass regenerate. The regeneration itself is an in-place write
+of five files, not a move, so the gate is about having something to follow,
+not about LiveSync. Numbered `4a` because Steps 5–7 are referenced from
+outside this file and keep their numbers.
+
 ## Step 5: Phase 2 — walk the promotion queue with the CEO
 
 **Input:** `promotion-queue.md` as Phase 1 left it — the migrated entries,
@@ -406,7 +452,10 @@ require the queue to reach zero.
 
 Write `state/ring-health-YYYY-MM-DD.md` with these sections, in order:
 
-1. Metrics — before (Step 2's `## metrics`) → after
+1. Metrics — before (Step 2's `## metrics`) → after, plus one row for the
+   disconnected-note count: Step 2's `--measure` line before → Step 4a's
+   after (INFRA-91). If Step 4a was skipped, say so in that row rather than
+   leaving it blank.
 2. Auto-applied actions
 3. Proposed actions with the CEO's decisions
 4. **Canon writes log** — path per note written to `10-middle` this pass

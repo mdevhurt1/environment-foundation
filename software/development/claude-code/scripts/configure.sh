@@ -114,6 +114,7 @@ link "$CANONICAL/shell/cc-skills-inject.sh" "$CLAUDE_DIR/cc-skills-inject.sh"
 # compacted one-line-per-memory form.
 link "$CANONICAL/shell/cc-memory-inject.sh"      "$CLAUDE_DIR/cc-memory-inject.sh"
 link "$CANONICAL/shell/cc-memory-index-regen.sh" "$CLAUDE_DIR/cc-memory-index-regen.sh"
+link "$CANONICAL/shell/cc-index-regen.sh" "$CLAUDE_DIR/cc-index-regen.sh"
 
 # Plane bookend sync, invoked from session-start / end-conversation /
 # ring-maintenance. Until INFRA-46 this was the one shipped helper with no

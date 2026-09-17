@@ -90,6 +90,7 @@ declare -A LINKS=(
     [cc-skills-inject.sh]="$CANONICAL/shell/cc-skills-inject.sh"
     [cc-memory-inject.sh]="$CANONICAL/shell/cc-memory-inject.sh"
     [cc-memory-index-regen.sh]="$CANONICAL/shell/cc-memory-index-regen.sh"
+    [cc-index-regen.sh]="$CANONICAL/shell/cc-index-regen.sh"
     [cc-plane-sync.sh]="$CANONICAL/shell/cc-plane-sync.sh"
 )
 for name in "${!LINKS[@]}"; do

@@ -2,6 +2,7 @@
 docs/superpowers/
 *CLAUDE.md
 !software/development/claude-code/canonical/CLAUDE.md
+!software/development/claude-code/parked/CLAUDE.md
 
 # macOS
 .DS_Store

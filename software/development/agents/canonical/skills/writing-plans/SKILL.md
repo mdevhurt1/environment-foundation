@@ -25,23 +25,14 @@ skills until the plan is approved.**
 
 ## Step 1: Load context
 
-Read `.cc-mode` walking up from cwd. Derive `task_id` per
-`~/.claude/CLAUDE.md`: a Plane issue ID if `.cc-mode` carries one,
-otherwise the `slug`. Extract `session_id`. Read the spec at
-`$HOME/vault/20-surface/company/tasks/$task_id/spec.md`.
+Ask the operator for `task_id` if it is not already given: a Plane issue ID (e.g. AI_ST-12) or a short slug, per AGENTS.md. Read the spec at `$HOME/vault/20-surface/company/tasks/$task_id/spec.md`.
 
 ```bash
-mode_file=$(d="$PWD"; while [ "$d" != / ]; do [ -f "$d/.cc-mode" ] && echo "$d/.cc-mode" && break; d=$(dirname "$d"); done)
-[ -z "$mode_file" ] && { echo "no .cc-mode — cannot derive task_id; abort"; exit 1; }
-slug=$(grep '^slug=' "$mode_file" | cut -d= -f2-)
-session_id=$(grep '^session_id=' "$mode_file" | cut -d= -f2-)
-plane_issue=$( { grep '^plane_issue=' "$mode_file" || true; } | cut -d= -f2-)
-task_id="${plane_issue:-$slug}"
+task_id="<task_id from the operator>"
 task_dir="$HOME/vault/20-surface/company/tasks/$task_id"
 spec_path="$task_dir/spec.md"
 [ ! -f "$spec_path" ] && { echo "no spec at $spec_path — run brainstorming first"; exit 1; }
-mkdir -p "$task_dir"
-echo "task_id=$task_id  session_id=$session_id  spec=$spec_path"
+echo "task_id=$task_id  spec=$spec_path"
 ```
 
 If `$task_dir/plan.md` already exists, ask the operator: **amend**,
@@ -130,35 +121,7 @@ review:
 
 On change request: edit, re-review inline, ask again.
 
-On approval: append exactly one `plan-written` event to this session's
-events directory, print a one-line confirmation with the plan path,
-and exit. Do not invoke `subagent-driven-development` or
-`executing-plans`. Do not write code. The CEO decides what comes next.
-
-```bash
-events_dir="$HOME/vault/20-surface/company/tree/sessions/${session_id}.events"
-mkdir -p "$events_dir"
-next=$(printf "%04d" $(( $(find "$events_dir" -maxdepth 1 -name '[0-9]*-*.md' 2>/dev/null | wc -l) + 1 )))
-cat > "$events_dir/${next}-plan-written.md" <<EOF
----
-event_id: $next
-verb: plan-written
-severity: info
-ts: $(date -Iseconds)
-plan_path: $task_dir/plan.md
-spec_path: $task_dir/spec.md
----
-
-Implementation plan written and approved.
-
-<one-line summary — the plan's title>
-EOF
-echo "plan: $task_dir/plan.md"
-echo "event: $events_dir/${next}-plan-written.md"
-```
-
-Replace `<one-line summary — the plan's title>` with the actual title
-before running the heredoc.
+On approval: print `plan: $task_dir/plan.md` and exit. Do not invoke `subagent-driven-development` or `executing-plans`. Do not write code. The CEO decides what comes next.
 
 ## Plan artifact template
 
@@ -175,7 +138,7 @@ type: implementation-plan
 
 **Architecture:** <2-3 sentences on approach>
 
-> Execute task-by-task in a branched session via `cc-branch`. Each task = one commit.
+> Execute task-by-task in a git worktree on its own branch. Each task = one commit.
 
 ## File Structure
 

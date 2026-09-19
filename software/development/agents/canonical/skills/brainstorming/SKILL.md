@@ -6,8 +6,7 @@ description: Turn an idea into a written spec through a short structured dialogu
 # brainstorming — turn an idea into a written spec
 
 A short structured dialogue that ends with an approved spec at
-`~/vault/20-surface/company/tasks/<task_id>/spec.md` and a single
-`spec-written` event in this session's events directory.
+`~/vault/20-surface/company/tasks/<task_id>/spec.md`.
 
 **Hard rule: do not write code, scaffold files, or invoke implementation
 skills until the spec is approved.**
@@ -23,21 +22,13 @@ skills until the spec is approved.**
 
 ## Step 1: Explore context
 
-Read `.cc-mode` walking up from cwd. Derive `task_id` per
-`~/.claude/CLAUDE.md`: a Plane issue ID if `.cc-mode` carries one,
-otherwise the `slug`. Extract `session_id`. Ensure the task directory
-exists.
+Ask the operator for `task_id` if it is not already given: a Plane issue ID (e.g. AI_ST-12) or a short slug, per AGENTS.md. Ensure the task directory exists.
 
 ```bash
-mode_file=$(d="$PWD"; while [ "$d" != / ]; do [ -f "$d/.cc-mode" ] && echo "$d/.cc-mode" && break; d=$(dirname "$d"); done)
-[ -z "$mode_file" ] && { echo "no .cc-mode — cannot derive task_id; abort"; exit 1; }
-slug=$(grep '^slug=' "$mode_file" | cut -d= -f2-)
-session_id=$(grep '^session_id=' "$mode_file" | cut -d= -f2-)
-plane_issue=$( { grep '^plane_issue=' "$mode_file" || true; } | cut -d= -f2-)
-task_id="${plane_issue:-$slug}"
+task_id="<task_id from the operator>"
 task_dir="$HOME/vault/20-surface/company/tasks/$task_id"
 mkdir -p "$task_dir"
-echo "task_id=$task_id  session_id=$session_id  task_dir=$task_dir"
+echo "task_id=$task_id  task_dir=$task_dir"
 ```
 
 If `$task_dir/spec.md` already exists, ask the operator: **amend**,
@@ -101,55 +92,11 @@ review:
 
 On change request: edit, re-review inline, ask again.
 
-On approval: append exactly one `spec-written` event to this session's
-events directory, then print a one-line confirmation and exit. Do not
-invoke `writing-plans`. Do not write code. The CEO decides what comes
-next.
-
-Emit it with the stamping helper — never hand-author the file (AI_ST-65).
-The helper stamps `emitted_at` from the clock and names the event
-`max(epoch, highest-existing-number + 1)`, which is what keeps the
-parent's `.read-up-to` cursor monotonic. The sequential `NNNN-` name and
-hand-typed `ts:` this step used to write did neither: a `NNNN-` event
-landing in a directory that already holds an epoch-named one compares
-below the marker and is unread forever.
+On approval: print the spec path and exit. Do not invoke `writing-plans`. Do not write code. The CEO decides what comes next.
 
 ```bash
-emit=~/.claude/skills/../shell/cc-event-emit.sh
-[ -f "$emit" ] || { echo "cc-event-emit.sh not found — run cc-doctor; do NOT hand-write the event"; exit 1; }
-# --to-session and --session-id are the SAME id here: the event is
-# self-addressed (it lands in this session's own events dir) and this
-# session is its emitter. Pass --session-id explicitly rather than letting
-# the helper fall back to $CC_SESSION_ID — Step 1 already read the
-# authoritative value out of .cc-mode, and an ambient variable can belong
-# to a different session than the spec does.
-bash "$emit" \
-  --to-session "$session_id" --session-id "$session_id" \
-  --verb spec-written --severity info \
-  --title "spec approved: <the spec's title>" \
-  --body "$(cat <<EOF
-Spec written and approved: $task_dir/spec.md
-<one line — what the spec decides>
-EOF
-)"
-rc=$?
-# Do NOT let the confirmation echo mask a failed emit: the spec would be on
-# disk while the parent never learns it exists, which reads as "still
-# brainstorming" from outside.
-if [ "$rc" -ne 0 ]; then
-  echo "spec-written event NOT emitted (cc-event-emit.sh exit $rc) — the spec is written but the tree will not show it"
-  exit "$rc"
-fi
 echo "spec: $task_dir/spec.md"
 ```
-
-Replace both `<...>` placeholders with the real title and decision line
-before running this. The helper prints the path of the event it wrote.
-
-If it exits 4 (`events dir does not exist`), the session's tree slot was
-never written — the `session-start` bookend did not run. Say so and run
-`bash ~/.claude/cc-tree-slot-write.sh`; do not `mkdir` the events
-directory, because a missing one means the address is wrong.
 
 ## Spec template
 

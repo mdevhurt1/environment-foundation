@@ -16,3 +16,7 @@ One instruction file and one skills directory for every agent runtime on this ma
 Secrets reach every shell through `~/.config/agents/env`, written by `~/environment-secrets/install.sh`.
 
 Everything parked on 2026-09-19 is under `../claude-code/parked/` unchanged; see `FREEZE.md` at the repo root.
+
+Git hooks: `.git/hooks/{pre-commit,pre-push}` are hand-installed wrappers that resolve
+`parked/hooks/*.sh` then `canonical/hooks/*.sh` and refuse the operation if neither is present.
+They are real files, not symlinks, because `.git/hooks` is shared by every worktree.

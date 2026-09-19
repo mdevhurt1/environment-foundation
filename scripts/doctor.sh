@@ -211,7 +211,7 @@ check_libraries_not_executable() {
   local lib mode bad
   for lib in \
     "shared/logging.sh" \
-    "software/development/claude-code/canonical/shell/cc-functions.sh"; do
+    "software/development/claude-code/parked/shell/cc-functions.sh"; do
 
     # A missing file is not a pass. Without this, moving or renaming the
     # library would silently turn the only assertion protecting live

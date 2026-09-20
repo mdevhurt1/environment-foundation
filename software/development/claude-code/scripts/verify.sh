@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Description: Post-install acceptance test for the claude-code module — checks the CLI, Node 20+, that each ~/.claude entry is a symlink into a claude-code canonical/ tree whose target exists, and that ~/.bashrc sources cc-functions.sh.
+# Description: Post-install acceptance test for the claude-code module: checks the CLI, Node 20+, and that the five ~/.claude links that survive the reset are symlinks into a claude-code canonical/ tree whose target exists, and that settings.json is a real file kept by hand.
 # Profiles:    workstation, workplace
 # Platforms:   ubuntu-24.04, ubuntu-22.04 (WSL supported)
 # Dependencies: claude CLI (install.sh), deployed dotfiles (configure.sh)
@@ -84,21 +84,14 @@ fi
 
 # --- 3. Deployed dotfiles ------------------------------------------------
 check_canonical_link "CLAUDE.md"              "CLAUDE.md"
-check_canonical_link "settings.json"          "settings.json"
+check "~/.claude/settings.json is a real file, kept by hand" \
+  bash -c '[ -f "$HOME/.claude/settings.json" ] && [ ! -L "$HOME/.claude/settings.json" ]'
 check_canonical_link "statusline-command.sh"  "statusline-command.sh"
-check_canonical_link "skills"                 "skills"
-check_canonical_link "cc-functions.sh"        "shell/cc-functions.sh"
-check_canonical_link "cc-tree-slot-write.sh"  "shell/cc-tree-slot-write.sh"
-check_canonical_link "cc-tree-slot-update.sh" "shell/cc-tree-slot-update.sh"
-check_canonical_link "cc-ring-scan.sh"        "shell/cc-ring-scan.sh"
 check_canonical_link "cc-memory-inject.sh"    "shell/cc-memory-inject.sh"
-check_canonical_link "cc-memory-index-regen.sh" "shell/cc-memory-index-regen.sh"
-check_canonical_link "cc-index-regen.sh"       "shell/cc-index-regen.sh"
+check_canonical_link "cc-outbound-guard.sh" "shell/cc-outbound-guard.sh"
 check_canonical_link "model-policy.json"      "model-policy.json"
 
 # --- 4. Shell wiring -----------------------------------------------------
-check "~/.bashrc sources cc-functions.sh" \
-  bash -c 'grep -Fq "source ~/.claude/cc-functions.sh" "$HOME/.bashrc"'
 
 # --- 5. Secrets: may legitimately be absent -> warn and skip -------------
 if [ -f "$CLAUDE_DIR/settings.local.json" ]; then
@@ -123,11 +116,9 @@ if [[ "$fails" -eq 0 ]]; then
   log_ok "All checks passed. Versions:"
   claude --version
   node --version
-  log_info "Open a new shell (or 'source ~/.bashrc') to pick up the cc-* wrappers."
-  log_info "For drift detection against this checkout, run: bash $SCRIPT_DIR/doctor.sh"
   exit 0
 else
   log_error "$fails check(s) failed."
-  log_warn "Re-run: bash $SCRIPT_DIR/install.sh && bash $SCRIPT_DIR/configure.sh"
+  log_warn "Re-run: bash $SCRIPT_DIR/install.sh && bash $REPO_ROOT/software/development/agents/scripts/install.sh"
   exit 1
 fi

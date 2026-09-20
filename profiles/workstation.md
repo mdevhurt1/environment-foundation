@@ -24,7 +24,7 @@ Run all baseline steps in order:
 ### 2. Development tools
 
 - [ ] [Claude Code — install](../software/development/claude-code/scripts/install.sh) `[dev]`
-- [ ] [Claude Code — configure](../software/development/claude-code/scripts/configure.sh) `[dev]`
+- [ ] [Agents — install](../software/development/agents/scripts/install.sh) `[dev]`
 - [ ] [Docker — install](../software/development/docker/scripts/install.sh) `[dev]`
 - [ ] [Docker — configure](../software/development/docker/scripts/configure.sh) `[dev]`
 - [ ] [LaTeX — install](../software/development/latex/scripts/install.sh) `[dev]` — pdflatex + latexmk for article-class documents; large download

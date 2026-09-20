@@ -41,7 +41,7 @@ escape_for_json() {
 
 size=$(wc -c < "$MEMORY_MD")
 if [ "$size" -gt "$MAX_BYTES" ]; then
-    context="MEMORY-INDEX WARNING: ${MEMORY_MD} is ${size} bytes (limit ${MAX_BYTES}) and was NOT injected. The index has re-bloated past the AI_ST-69 compaction budget. Read it explicitly only if you need recall, and regenerate it with: bash ~/.claude/cc-memory-index-regen.sh"
+    context="MEMORY-INDEX WARNING: ${MEMORY_MD} is ${size} bytes (limit ${MAX_BYTES}) and was NOT injected. The index has re-bloated past the AI_ST-69 compaction budget. Read it explicitly only if you need recall, and regenerate it with: bash ~/environment-foundation/software/development/claude-code/parked/shell/cc-memory-index-regen.sh"
 else
     body=$(cat "$MEMORY_MD")
     escaped=$(escape_for_json "$body")

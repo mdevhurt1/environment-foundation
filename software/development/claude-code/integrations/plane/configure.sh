@@ -3,7 +3,7 @@
 #              credential readable from settings.local.json, instance reachable.
 # Profiles:    workstation
 # Platforms:   ubuntu-24.04, ubuntu-22.04
-# Dependencies: claude (install.sh), configure.sh (symlinks canonical skills)
+# Dependencies: claude (install.sh), agents/scripts/install.sh (links the shared skills)
 # Idempotent. Read-only — installs nothing.
 
 set -euo pipefail
@@ -25,15 +25,14 @@ SKILL="$HOME/.claude/skills/plane-api/SKILL.md"
 fail=0
 
 # ---- 1. canonical skill must already be deployed ----
-# The plane-api skill is canonical (canonical/skills/plane-api/). It arrives via
-# claude-code/scripts/configure.sh, which symlinks ~/.claude/skills -> canonical/skills.
-# This script deliberately does NOT copy a skill into place: doing so would create a
-# real ~/.claude/skills directory and block that symlink.
+# The plane-api skill is shared (agents/canonical/skills/plane-api/). It arrives via
+# agents/scripts/install.sh, which links ~/.claude/skills/plane-api into ~/.agents/skills.
+# This script deliberately does NOT copy a skill into place: a real copy would shadow that link.
 log_info "Checking canonical plane-api skill..."
 if [ -f "$SKILL" ]; then
     log_ok "plane-api skill present at $SKILL"
 else
-    log_error "plane-api skill missing — run: bash $REPO_ROOT/software/development/claude-code/scripts/configure.sh"
+    log_error "plane-api skill missing — run: bash $REPO_ROOT/software/development/agents/scripts/install.sh"
     fail=1
 fi
 

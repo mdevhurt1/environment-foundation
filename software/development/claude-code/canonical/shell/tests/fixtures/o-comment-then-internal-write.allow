@@ -1,0 +1,2 @@
+# don't forget the step separator; it's in the body
+curl -s -X POST -H "X-Api-Key: $PLANE_API_KEY" -d '{"comment_html":"<p>one; two</p>"}' "http://plane.homelab/api/v1/workspaces/homelab/projects/p/issues/i/comments/"

@@ -99,7 +99,8 @@ The contract does **not** reach these, and the linter does not scan them:
 | Path | Why |
 |---|---|
 | `shared/logging.sh` | Sourced library, not an executable. Must stay mode `100644`. |
-| `software/*/*/canonical/**` | Deployed payload, not module scripts. Includes `claude-code/parked/shell/cc-functions.sh`, which is a sourced library and must stay mode `100644`. |
+| `software/*/*/canonical/**` | Deployed payload, not module scripts. |
+| `software/*/*/parked/**` | Payload parked by the 2026-09-19 reset; not scanned, since `doctor.sh` scans only each module's `scripts/`. Includes `claude-code/parked/shell/cc-functions.sh`, a sourced library that must stay mode `100644` (`doctor.sh` checks it by path). |
 | `software/*/*/platform-notes/**` | Documentation. |
 | `platforms/**` | Platform baseline, not modules. Open question — see below. |
 | `software/development/claude-code/integrations/**` | Has a `configure.sh` outside `scripts/`. Open question — see below. |

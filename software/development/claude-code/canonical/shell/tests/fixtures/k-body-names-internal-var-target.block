@@ -1,0 +1,1 @@
+curl -s -X POST -d '{"note":"draft; mirror at http://plane.homelab/x"}' "$URL"

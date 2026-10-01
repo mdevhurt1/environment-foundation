@@ -9,9 +9,9 @@ issues via the `plane-api` skill.
 ## What this does — and does not — install
 
 The `plane-api` skill is **canonical**. It lives at
-`software/development/claude-code/canonical/skills/plane-api/` and is deployed
-by the module's own `scripts/configure.sh`, which symlinks
-`~/.claude/skills` → `canonical/skills`.
+`software/development/agents/canonical/skills/plane-api/` and is deployed by
+`software/development/agents/scripts/install.sh`, which links it into
+`~/.agents/skills` and links `~/.claude/skills/plane-api` to that.
 
 This integration installs **nothing**. It is a read-only verification step.
 
@@ -24,7 +24,7 @@ This integration installs **nothing**. It is a read-only verification step.
 ## Prerequisites
 
 1. Claude Code installed — `software/development/claude-code/scripts/install.sh`
-2. Canonical dotfiles deployed — `software/development/claude-code/scripts/configure.sh`
+2. Shared skills and links deployed — `software/development/agents/scripts/install.sh`
 3. Secrets provisioned — `~/environment-secrets/install.sh`
 
 ## Credential

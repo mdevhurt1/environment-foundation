@@ -4,7 +4,7 @@ One operator (Marcus), one machine. This is the only global instruction file. Pr
 
 ## Memory
 - At session start read ~/vault/20-surface/claude-memory/MEMORY.md (one line per memory). Before re-deriving or re-asking anything a line names, read that memory file.
-- When you learn something durable and cross-task (a preference, a correction, a homelab fact, a gotcha), write ~/vault/20-surface/claude-memory/<type>_<slug>.md with frontmatter `name`, `description`, and `metadata.type` (user | feedback | project | reference), then append one line to MEMORY.md: `- [[<type>_<slug>]] — <hook>`. Links use the filename stem.
+- When you learn something durable and cross-task (a preference, a correction, a homelab fact, a gotcha), write ~/vault/20-surface/claude-memory/<type>_<slug>.md with frontmatter `name`, `description`, and `metadata.type` (user | feedback | project | reference), then run `bash ~/.claude/cc-memory-index-regen.sh`, which adds its `- [[<type>_<slug>]] — <hook>` line to MEMORY.md under a lock (if that link is missing, append the line by hand). Links use the filename stem.
 - Do not save what a repo, git history, or this file already records.
 
 ## Vault (~/vault, Obsidian)
@@ -24,4 +24,4 @@ One operator (Marcus), one machine. This is the only global instruction file. Pr
 ## Working style
 - Verify before claiming done: run the command and show its output. If something was not run, say so.
 - Ask only when different readings lead to materially different work; otherwise state the assumption and proceed.
-- Smallest change that solves the problem. During the freeze in ~/environment-foundation/FREEZE.md, add no harness tooling, hooks, or skills; log friction in ~/vault/20-surface/inbox/harness-friction.md instead.
+- Smallest change that solves the problem. Harness changes (tooling, hooks, skills, this file) ship as planned releases, not mid-task; log harness friction in ~/vault/20-surface/inbox/harness-friction.md for the Friday review.

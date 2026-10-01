@@ -1,0 +1,3 @@
+curl -s -X POST \
+  -d '{"text":"x; y"}' \
+  https://gitlab.com/api/v4/projects/1/issues

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Description: Post-install acceptance test for the claude-code module: checks the CLI, Node 20+, and that the five ~/.claude links that survive the reset are symlinks into a claude-code canonical/ tree whose target exists, and that settings.json is a real file kept by hand.
+# Description: Post-install acceptance test for the claude-code module: checks the CLI, Node 20+, and that the six ~/.claude links (five kept by the reset, plus the memory-index regen added in v2.0.0) are symlinks into a claude-code canonical/ tree whose target exists, and that settings.json is a real file kept by hand.
 # Profiles:    workstation, workplace
 # Platforms:   ubuntu-24.04, ubuntu-22.04 (WSL supported)
-# Dependencies: claude CLI (install.sh), deployed dotfiles (configure.sh)
+# Dependencies: claude CLI (install.sh), deployed links (agents/scripts/install.sh)
 
 set -uo pipefail   # NOTE: no -e — we want every check to run and report.
 
@@ -33,7 +33,7 @@ check() {
 # Acceptance, not drift detection: assert the entry is a symlink whose target
 # ends with the canonical path and actually exists. It deliberately does NOT
 # compare against this checkout's $REPO_ROOT — the deployed links legitimately
-# point at whichever clone ran configure.sh (commonly the main worktree, while
+# point at whichever clone ran agents/scripts/install.sh (commonly the main worktree, while
 # this script may be run from a branch worktree). scripts/doctor.sh is the tool
 # that asserts exact canonical paths for THIS checkout.
 check_canonical_link() {
@@ -41,7 +41,7 @@ check_canonical_link() {
   local path="$CLAUDE_DIR/$name"
   if [ ! -L "$path" ]; then
     log_error "$path is not a symlink"
-    log_warn "  run configure.sh to deploy the canonical dotfiles"
+    log_warn "  run: bash $REPO_ROOT/software/development/agents/scripts/install.sh"
     fails=$((fails + 1))
     return
   fi
@@ -84,12 +84,13 @@ fi
 
 # --- 3. Deployed dotfiles ------------------------------------------------
 check_canonical_link "CLAUDE.md"              "CLAUDE.md"
-check "~/.claude/settings.json is a real file, kept by hand" \
+check "settings.json in ~/.claude is a real file, kept by hand" \
   bash -c '[ -f "$HOME/.claude/settings.json" ] && [ ! -L "$HOME/.claude/settings.json" ]'
 check_canonical_link "statusline-command.sh"  "statusline-command.sh"
 check_canonical_link "cc-memory-inject.sh"    "shell/cc-memory-inject.sh"
 check_canonical_link "cc-outbound-guard.sh" "shell/cc-outbound-guard.sh"
 check_canonical_link "model-policy.json"      "model-policy.json"
+check_canonical_link "cc-memory-index-regen.sh" "shell/cc-memory-index-regen.sh"   # AI_ST-116
 
 # --- 4. Shell wiring -----------------------------------------------------
 

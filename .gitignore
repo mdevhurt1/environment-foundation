@@ -28,3 +28,6 @@ Thumbs.db
 **/*.decrypted
 # Session mode markers written by cc-functions.sh — local only
 .cc-mode
+
+# Claude Code cloud skill sync; never ours, moved out by install.sh (AI_ST-107)
+software/development/agents/canonical/skills/synced/

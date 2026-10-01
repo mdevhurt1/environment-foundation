@@ -1,0 +1,3 @@
+# don't post this yet
+curl -s -X POST -d x "$URL"; echo done http://plane.homelab/x
+# it's staged for the CEO

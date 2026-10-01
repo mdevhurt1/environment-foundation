@@ -1,0 +1,1 @@
+curl -s -X POST -H "Referer: http://plane.homelab/x" -d '{"a":1}' "$URL"

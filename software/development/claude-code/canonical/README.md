@@ -28,6 +28,8 @@ non-secret, non-machine-specific Claude Code configuration.
 - `settings.json` — Claude Code settings (no secrets, no per-machine, no model)
 - `model-policy.json` — role->model policy (see the module README)
 - `statusline-command.sh` — statusline renderer (mode, cwd, context %)
-- `shell/cc-functions.sh` — `cc-explore`, `cc-build`, `cc-continue` wrappers
-- `skills/session-start/SKILL.md` — front-of-session bookend
-- `skills/end-conversation/SKILL.md` — close-of-session bookend
+- `shell/cc-memory-inject.sh` — SessionStart hook: points the session at MEMORY.md (AI_ST-123)
+- `shell/cc-outbound-guard.sh` — PreToolUse hook: blocks outbound writes from Bash (AI_ST-110)
+- `shell/cc-memory-index-regen.sh` — rebuilds MEMORY.md from the memory files; `--check` asserts the invariant (AI_ST-116)
+- `shell/tests/` — guard fixtures and runner
+- Skills, including `session-start` and `end-conversation`, live in `software/development/agents/canonical/skills/`, shared by all four runtimes

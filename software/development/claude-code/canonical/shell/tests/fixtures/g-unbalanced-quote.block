@@ -1,0 +1,1 @@
+curl -s -X POST -d @body.json "$URL"; echo 'http://plane.homelab/x

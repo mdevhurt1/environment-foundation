@@ -1,0 +1,1 @@
+curl -s -X PATCH -H "Content-Type: application/json" -d '{"description_html":"<p>a | b && c & d</p>"}' "http://plane.homelab/api/v1/workspaces/homelab/projects/p/issues/i/"

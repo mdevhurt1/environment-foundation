@@ -94,7 +94,7 @@ not reproducible, gather more data — do not guess.
 #### 4. Check recent changes
 
 `git log --oneline -20`, `git diff`, new dependencies, config changes,
-environment differences. In this repo, also check whether `configure.sh` has
+environment differences. In this repo, also check whether `agents/scripts/install.sh` has
 run since the change: `~/.claude/*` symlinks point at whichever clone ran it —
 normally the **main** worktree — so an edit made in a branch worktree may not
 be the code that is executing.

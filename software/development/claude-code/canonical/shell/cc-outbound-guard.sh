@@ -227,13 +227,123 @@ write_shaped_http() {
 # invoke a client. This is not a loophole: a body piped INTO curl still lands
 # in curl's own segment, and a posting segment after a harmless one is still
 # its own segment. Splitting on the shell operators keeps both.
+#
+# The split happens on the RAW command, outside quotes only (AI_ST-110). It
+# used to run on $nq, whose quotes are already gone, so a `;` inside a quoted
+# `-d '{…}'` body ended curl's segment early and orphaned its URL into the next
+# one; the curl segment then named no host and failed closed on an ordinary
+# internal Plane write.
+#
+# Merging text into one segment can only ADD hosts, and an added internal host
+# can turn a fail-closed segment into an allowed one. Two rules keep the merge
+# from rescuing a hidden target (second review, 2026-10-01):
+#   - quote characters count only in shell code: an unquoted `#` at a word
+#     start comments to end of line, and heredoc bodies (`<<WORD`, `<<'WORD'`,
+#     `<<-WORD`) run to their terminator as data. An apostrophe in `# don't` or
+#     in a heredoc line used to open a quote that swallowed a real `;`.
+#   - client arguments that are not targets are masked to BODY before the host
+#     test: the value of -d/--data*/--json/-F/--form*/-H/--header/-e/--referer
+#     (curl) and --post-data/--body-data/--header (wget). A URL that appeared
+#     only inside a body or header used to stand in for a target held in "$URL"
+#     and pass as internal.
+# The old operator split still stands where the quoting is ambiguous, erring
+# toward the recoverable false block:
+#   - the no-jq path, where $cmd is raw JSON and its quotes are JSON's;
+#   - unbalanced quotes;
+#   - `$'…'` ANSI-C quoting, where `\'` does not close the quote.
+# A command with no quote characters keeps the old split too: nothing in it can
+# swallow a separator.
+#
+# awk, not a bash character loop: the loop took ~7s on a 60KB heredoc, and this
+# runs on every Bash call. Newlines fold to spaces as in $nq (continuations
+# included); a heredoc body stays in its command's segment, as it always has.
+# awk prints UNBALANCED instead of segments when a quote never closes.
+segments() {
+    local out
+    if [ "$cmd" = "$payload" ] || [[ "$cmd" == *"\$'"* ]] || [[ "$cmd" != *[\"\']* ]]; then
+        tr '|;&' '\n' <<<"$nq"; return
+    fi
+    out=$(printf '%s\n' "$cmd" | LC_ALL=C awk -v sq="'" '
+        function endword(   raw, bare) {
+            if (ws == 0) return
+            raw = substr(o, ws); bare = raw; gsub(/["\047]/, "", bare); ws = 0
+            if (mask) { o = substr(o, 1, length(o) - length(raw)) "BODY"; mask = 0; return }
+            if (bare ~ /(^|\/)curl$/) client = "curl"
+            else if (bare ~ /(^|\/)wget$/) client = "wget"
+            if (bare ~ /^--(data|data-raw|data-binary|data-ascii|data-urlencode|json|form|form-string|header|referer|post-data|body-data)$/ \
+                || (client == "curl" && bare ~ /^-[dFHe]$/)) { mask = 1; return }
+            if (match(bare, /^--(data|data-raw|data-binary|data-ascii|data-urlencode|json|form|form-string|header|referer|post-data|body-data)=/))
+                o = substr(o, 1, length(o) - length(raw)) substr(bare, 1, RLENGTH) "BODY"
+            else if (client == "curl" && bare ~ /^-[dFHe]./)
+                o = substr(o, 1, length(o) - length(raw)) substr(bare, 1, 2) "BODY"
+        }
+        function sep(c) { return c == "|" || c == ";" || c == "&" }
+        { s = s $0 "\n" }
+        END {
+            n = length(s); q = ""; esc = 0; o = ""; ws = 0; mask = 0; client = ""; cm = 0; nh = 0
+            for (i = 1; i <= n; i++) {
+                c = substr(s, i, 1)
+                if (esc) { o = o (c == "\n" ? " " : c); esc = 0; continue }
+                if (cm) {                              # comment: quote characters are text
+                    if (c != "\n") { o = o (sep(c) ? "\n" : c); continue }
+                    cm = 0
+                }
+                if (q == "" && c == "\n") {            # end of a shell line
+                    endword(); mask = 0; client = ""; o = o " "
+                    for (k = 1; k <= nh; k++) {          # heredoc bodies: data up to the terminator
+                        while (i < n) {
+                            j = index(substr(s, i + 1), "\n"); if (j == 0) j = n - i
+                            line = substr(s, i + 1, j - 1); i = i + j
+                            t = line; if (hd[k]) sub(/^\t+/, "", t)
+                            if (t == ht[k]) { o = o line " "; break }
+                            gsub(/[|;&]/, "\n", line); o = o line " "
+                        }
+                    }
+                    nh = 0; continue
+                }
+                if (q == "" && c == "#" && (i == 1 || substr(s, i - 1, 1) ~ /[ \t\n;|&()]/)) {
+                    endword(); cm = 1; o = o c; continue
+                }
+                if (q == "" && c == "<" && substr(s, i + 1, 1) == "<" && substr(s, i + 2, 1) != "<") {
+                    endword(); j = i + 2; dash = 0
+                    if (substr(s, j, 1) == "-") { dash = 1; j++ }
+                    while (substr(s, j, 1) ~ /[ \t]/) j++
+                    w = ""
+                    while (j <= n && substr(s, j, 1) !~ /[ \t\n;|&<>()]/) { w = w substr(s, j, 1); j++ }
+                    gsub(/["\047\\]/, "", w)
+                    if (w != "") { nh++; ht[nh] = w; hd[nh] = dash }
+                    o = o substr(s, i, j - i); i = j - 1; continue
+                }
+                if (c == "\\" && q != sq) { if (ws == 0) ws = length(o) + 1; o = o c; esc = 1; continue }
+                if (q == "" && (c == sq || c == "\"")) q = c
+                else if (q != "" && c == q) q = ""
+                else if (q == "" && sep(c)) { endword(); mask = 0; client = ""; o = o "\n"; continue }
+                else if (q == "" && (c == " " || c == "\t")) { endword(); o = o c; continue }
+                if (c == "\n") c = " "
+                if (ws == 0) ws = length(o) + 1
+                o = o c
+            }
+            endword()
+            if (q != "") { print "UNBALANCED"; exit }
+            print o
+        }')
+    if [ "$out" = UNBALANCED ]; then
+        tr '|;&' '\n' <<<"$nq"; return
+    fi
+    # Normalise each segment exactly as $nq is built.
+    printf '%s\n' "$out" | tr -d '"'"'" | tr '\t' ' ' | sed -e 's/\\ / /g' -e 's/  */ /g'
+}
+
 raw_http_write() {
     local seg
+    grep -qE "${B}(curl|wget)\b" <<<"$nq" || return 1
+    # One grep picks the client segments (the same test the loop used to run per
+    # segment): a big heredoc splits into thousands, and a process each cost seconds.
     while IFS= read -r seg; do
-        grep -qE "${B}(curl|wget)\b" <<<"$seg" || continue
+        [ -n "$seg" ] || continue
         write_shaped_http "$seg" || continue
         outbound_target "$(tr '[:upper:]' '[:lower:]' <<<"$seg")" && return 0
-    done <<<"$(tr '|;&' '\n' <<<"$nq")"
+    done <<<"$(segments | grep -E "${B}(curl|wget)\b")"
     return 1
 }
 

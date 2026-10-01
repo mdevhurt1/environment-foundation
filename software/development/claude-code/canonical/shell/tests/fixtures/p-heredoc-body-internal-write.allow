@@ -1,0 +1,3 @@
+curl -s -X POST -H "Content-Type: application/json" -d @- http://plane.homelab/api/v1/workspaces/homelab/projects/p/issues/ <<'EOF'
+{"name":"don't panic; it's internal & fine"}
+EOF

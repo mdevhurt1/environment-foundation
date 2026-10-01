@@ -1,0 +1,1 @@
+echo start; curl -s -d '{"text":"hi"}' https://pastebin.example.com/api; echo http://plane.homelab/done

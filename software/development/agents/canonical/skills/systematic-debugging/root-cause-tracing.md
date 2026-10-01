@@ -69,6 +69,9 @@ against its own `REPO_ROOT` — `~/.claude/*` points at whichever clone ran
 
 ## A second worked chain: the read marker that never advanced
 
+Historical: `events-scan.sh` and the event tree it read were retired by the
+2026-09-19 harness reset. The chain is kept for its method, not its tools.
+
 | Level | Question | Answer |
 |---|---|---|
 | Symptom | parent never surfaces a child's events | `events-scan.sh` prints "no unread events" |

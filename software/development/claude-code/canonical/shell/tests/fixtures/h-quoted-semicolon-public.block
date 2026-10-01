@@ -1,0 +1,1 @@
+curl -s -d '{"text":"a;b"}' https://discord.com/api/webhooks/1/x

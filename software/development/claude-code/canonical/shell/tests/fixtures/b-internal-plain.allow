@@ -1,0 +1,1 @@
+curl -s -X POST -H "X-Api-Key: $PLANE_API_KEY" -H "Content-Type: application/json" -d '{"comment_html":"<p>step one, step two</p>"}' http://plane.homelab/api/v1/workspaces/homelab/projects/p/issues/i/comments/

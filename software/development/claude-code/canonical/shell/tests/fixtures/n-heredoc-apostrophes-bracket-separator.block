@@ -1,0 +1,7 @@
+cat > note.md <<'EOF'
+We don't post from here.
+EOF
+curl -s -X POST -d x "$URL"; echo done http://plane.homelab/x
+cat > next.md <<EOF
+It's staged.
+EOF

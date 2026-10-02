@@ -88,7 +88,9 @@ plan → skip to Step 4. Normal for ad-hoc work.
 No Plane issue, but Step 2 **did** capture a new spec or plan → this work
 outlives the session and has no board presence. Ask **one** question: does
 this have a Plane issue to link, and which? Answer "no", or no answer →
-skip to Step 4 and say so in the final report.
+skip to Step 4 and say so in the final report. An issue named → post the
+comment `<spec or plan captured> (<path>)` on it, leave its state and
+labels unchanged, ask nothing further, and re-read it as below.
 
 **This is not a second question.** It fires only where the bookend
 otherwise asks none: a session with an issue asks its one
@@ -121,9 +123,14 @@ under the encoded **full cwd** (a worktree session's is NOT under
 so `_` and `.` go too (`AI_ST-100` -> `AI-ST-100`; checked against all 169
 project dirs 2026-10-01). The dir name starts with `-`, so keep the path prefix:
 
+Nothing exports the goal to a shell, so fill in the first line yourself:
+
 ```bash
+session_goal='<the one-sentence goal from session-start Step 5>'
 transcript=$(ls -t ~/.claude/projects/"$(pwd | sed 's/[^A-Za-z0-9-]/-/g')"/*.jsonl 2>/dev/null | head -1)
 slug=$(echo "$session_goal" | tr -cs 'A-Za-z0-9' '-' | tr A-Z a-z | sed 's/^-//;s/-$//')
+[ -n "$transcript" ] && [ -n "$slug" ] || { echo "no transcript or empty goal: not rendered"; exit 1; }
+mkdir -p ~/vault/20-surface/claude-transcripts
 bash ~/.agents/skills/end-conversation/render-transcript.sh \
   "$transcript" \
   ~/vault/20-surface/claude-transcripts/$(date +%Y-%m-%d)-${slug}.md \
@@ -139,6 +146,7 @@ runtime keeps its own session log.
 If Step 1 or 1a added, renamed, re-described or removed any memory file:
 
 ```bash
+regen=~/.claude/cc-memory-index-regen.sh   # set here too: each block may run in a fresh shell
 if [ -f "$regen" ]; then bash "$regen" && bash "$regen" --check
 else echo "regen script not installed: hand-edit MEMORY.md, one line per memory"; fi
 ```
@@ -175,15 +183,17 @@ Skip unless this session created the git worktree it is working in
 it). Then prompt:
 
 > "Fold the worktree?
->   m) merge clean changes back to <base-branch>
->   p) open a draft PR
+>   m) print the commands to merge it into <base-branch>
+>   p) print the commands to push it and open a draft PR
 >   k) keep the worktree for later (default)
 >   d) discard (DESTRUCTIVE — confirmation required)"
 
-Default **keep**. Merging and opening a PR are outward actions AGENTS.md
-reserves for an explicit ask, and the answer here is that ask. For `m`/`p`,
-verify the git commands succeeded before declaring done. For `d`, require
-the operator to type the worktree name.
+Default **keep**. Merging, pushing and opening a PR are operator-reserved,
+and a menu letter is not an explicit ask: for `m` and `p`, run nothing that
+merges or pushes. Hand the operator the exact commands instead, naming the
+base branch (often `main`), the remote and the branch, and say that `p`
+pushes. For `d`, require the operator to type the worktree name.
+**Unattended sessions** never prompt here: keep the worktree.
 
 ## Step 8: Final report
 

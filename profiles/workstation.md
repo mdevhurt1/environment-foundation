@@ -25,6 +25,7 @@ Run all baseline steps in order:
 
 - [ ] [Claude Code — install](../software/development/claude-code/scripts/install.sh) `[dev]`
 - [ ] [Agents — install](../software/development/agents/scripts/install.sh) `[dev]`
+- [ ] Secrets — `git clone <gitea>/mhurt/environment-secrets ~/environment-secrets && ~/environment-secrets/install.sh` `[dev]` — writes `settings.local.json` and `~/.config/agents/env` (see the [Claude Code README](../software/development/claude-code/README.md))
 - [ ] [Docker — install](../software/development/docker/scripts/install.sh) `[dev]`
 - [ ] [Docker — configure](../software/development/docker/scripts/configure.sh) `[dev]`
 - [ ] [LaTeX — install](../software/development/latex/scripts/install.sh) `[dev]` — pdflatex + latexmk for article-class documents; large download
@@ -38,6 +39,7 @@ Run all baseline steps in order:
 - [ ] [Performance Dashboard — install](../software/system/perf-dashboard/scripts/install.sh) `[workstation]` — three-tier glanceable system monitor (Vitals + Conky + Netdata)
 - [ ] [Performance Dashboard — configure](../software/system/perf-dashboard/scripts/configure.sh) `[workstation]`
 - [ ] [Ollama GPU watch — install](../software/system/ollama-gpu-watch/scripts/install.sh) `[workstation]` — GPU hosts running the `ollama` container only; 15-min user timer that fails loudly when Ollama falls back to CPU
+- [ ] Ollama GPU watch — first run: `systemctl --user start ollama-gpu-watch.service` `[workstation]` — verify needs the metric file this run writes
 - [ ] [Ollama GPU watch — verify](../software/system/ollama-gpu-watch/scripts/verify.sh) `[workstation]`
 
 ### 4. Peripherals

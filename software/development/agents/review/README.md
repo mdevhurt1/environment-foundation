@@ -51,8 +51,9 @@ reviewers saw, even after the rubric has moved on (`git log -p review-rubric.md`
 ```bash
 cd software/development/agents/review
 round=~/vault/20-surface/company/tasks/<ISSUE>/reviews/round-1
-# Set MODEL_1..MODEL_4 to four distinct qualifying model ids verified in their runtimes.
-tools/assemble_prompts.py --producer claude-fable-5-1 \
+# Set PRODUCER to the model that wrote the artefact (the most capable, if several did),
+# and MODEL_1..MODEL_4 to four distinct qualifying model ids verified in their runtimes.
+tools/assemble_prompts.py --producer "$PRODUCER" \
   --reviewer "$MODEL_1" --reviewer "$MODEL_2" --reviewer "$MODEL_3" --reviewer "$MODEL_4" \
   --brief brief.md --out "$round" --root ~/environment-foundation path/to/artefact ...
 # run each $round/seat-N.prompt.txt through its reviewer; save the reply as $round/seat-N.md

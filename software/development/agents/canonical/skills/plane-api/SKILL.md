@@ -39,10 +39,11 @@ no_proxy="" NO_PROXY="" curl -s -H "X-Api-Key: $PLANE_API_KEY" \
   "http://plane.homelab/api/v1/workspaces/homelab/projects/"
 ```
 
-**Combined first-call template** — copy-paste this for the very first request of a session, since it handles both the auth and network gotchas at once:
+**Combined first-call template** — copy-paste this for the very first request of a session, since it handles both the auth and network gotchas at once. It keeps a key already in the environment (`~/.config/agents/env` supplies it to every runtime), reads the JSON only when none is set, and stops on an empty key:
 
 ```bash
-PLANE_API_KEY=$(python3 -c "import json,os;print(json.load(open(os.path.expanduser('~/.claude/settings.local.json')))['env']['PLANE_API_KEY'])")
+[ -n "$PLANE_API_KEY" ] || PLANE_API_KEY=$(python3 -c "import json,os;print(json.load(open(os.path.expanduser('~/.claude/settings.local.json')))['env']['PLANE_API_KEY'])")
+[ -n "$PLANE_API_KEY" ] || { echo "no PLANE_API_KEY: run environment-secrets install.sh"; exit 1; }
 no_proxy="" NO_PROXY="" curl -s -H "X-Api-Key: $PLANE_API_KEY" \
   "http://plane.homelab/api/v1/workspaces/homelab/projects/"
 ```
@@ -201,6 +202,34 @@ DELETE /api/v1/workspaces/{workspace_slug}/projects/{project_id}/issues/{issue_i
 ```
 
 Returns 204 No Content on success.
+
+### Comment on an issue
+
+```
+POST /api/v1/workspaces/{workspace_slug}/projects/{project_id}/issues/{issue_id}/comments/
+
+{ "comment_html": "<p>...</p>" }
+```
+
+`GET` on the same path lists the comments (paginated envelope; each has
+`id`, `comment_html`, `created_at`). Path and field verified by a read on
+2026-10-02.
+
+### List labels / add a label
+
+```
+GET /api/v1/workspaces/{workspace_slug}/projects/{project_id}/labels/
+```
+
+Key response fields per result: `id` → `label_id`, `name` (e.g. `blocked`).
+An issue's `labels` field is a list of label ids, and a PATCH of `labels`
+**replaces** the whole list. To add one, read the issue first and send the
+old ids plus the new one:
+
+```
+GET   .../issues/{issue_id}/          → "labels": ["<id1>"]
+PATCH .../issues/{issue_id}/  { "labels": ["<id1>", "<blocked_label_id>"] }
+```
 
 ---
 

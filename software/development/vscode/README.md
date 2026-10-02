@@ -69,7 +69,8 @@ installed extensions that are not declared.
 
 ```bash
 bash scripts/configure.sh                       # install missing extensions
-diff <(grep -v '^#' canonical/extensions.txt) <(code --list-extensions)   # see drift
+diff <(grep -vE '^[[:space:]]*(#|$)' canonical/extensions.txt | tr -d ' \t\r' | tr '[:upper:]' '[:lower:]' | sort -u) \
+     <(code --list-extensions | tr '[:upper:]' '[:lower:]' | sort -u)   # see drift, compared as configure.sh does
 ```
 
 ## User settings are not managed

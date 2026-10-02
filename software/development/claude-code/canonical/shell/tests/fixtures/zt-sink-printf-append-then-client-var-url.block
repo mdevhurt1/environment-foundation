@@ -1,0 +1,1 @@
+printf '%s\n' '- 2026-09-28 cc: guard blocked `curl -G --data-urlencode "jql=..."`.' >> ~/vault/20-surface/inbox/harness-friction.md; curl -sS -X POST -d @body.json "$JIRA_URL/rest/api/3/issue"

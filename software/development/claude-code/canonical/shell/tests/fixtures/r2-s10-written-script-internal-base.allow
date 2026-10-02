@@ -1,0 +1,6 @@
+cat > s.py <<'EOF'
+import requests
+BASE = "http://plane.homelab/api"
+requests.post(BASE + "/x", json={})
+EOF
+python3 s.py

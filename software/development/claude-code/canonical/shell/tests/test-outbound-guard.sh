@@ -53,6 +53,40 @@ run "$(mkhome set "$TEST_LIST")" set "$here"/fixtures/*.allow "$here"/fixtures/*
 run "$(mkhome none)" no-env "$here"/fixtures/unset/*.allow "$here"/fixtures/unset/*.block
 run "$(mkhome junk "$JUNK_LIST")" junk-env "$here"/fixtures/unset/*.allow "$here"/fixtures/unset/*.block
 
+# Latency (AI_ST-126). An 844 KB heredoc of client lines whose URL sits in a
+# variable assigned on line 1 is the worst measured shape: every line is a client
+# segment and each needs the variable resolved. It took 56 s, near the hook
+# timeout. Generated here rather than committed; the verdict is checked too, with
+# a trailing external write (fixtures/perf/) as the positive control. The
+# heredoc feeds `bash`, so the sink test (AI_ST-109) cannot stand down and every
+# segment is scanned; the `cat > file` case times the sink test itself.
+perf() {  # perf <label> <want> <heredoc consumer> [trailer-file]
+    local label=$1 want=$2 consumer=$3 trailer="" payload t0 t1 ms got
+    [ -n "${4-}" ] && trailer=$(cat "$4")
+    payload=$(LC_ALL=C awk -v trailer="$trailer" -v consumer="$consumer" 'BEGIN {
+        q = "\047"; dq = "\""
+        cmd = "API=http://plane.homelab/api\n" consumer " <<" q "EOF" q "\n"
+        for (i = 1; length(cmd) < 844 * 1024; i++) {
+            cmd = cmd "Line " i ": the report cites https://example.org/d/" i " and it" q "s fine; a | b & c\n"
+            if (i % 5 == 0) cmd = cmd "  curl -s -X POST -d " q "{" dq "k" dq ":" i "}" q " " dq "$API/" i dq "\n"
+        }
+        printf "%sEOF\n%s", cmd, trailer
+    }' | jq -Rs '{tool_name:"Bash", tool_input:{command:.}}')
+    t0=$(date +%s%N)
+    HOME="$(mkhome set "$TEST_LIST")" bash "$guard" <<<"$payload" >/dev/null 2>&1
+    got=$?
+    t1=$(date +%s%N); ms=$(( (t1 - t0) / 1000000 ))
+    if [ "$got" -eq "$want" ] && [ "$ms" -lt 5000 ]; then
+        pass=$((pass + 1)); echo "PASS perf $label (${#payload} bytes, exit $got, ${ms} ms)"
+    else
+        fail=$((fail + 1)); echo "FAIL perf $label (want exit $want under 5000 ms, got exit $got in ${ms} ms)"
+    fi
+}
+perf heredoc-844k-into-bash 0 bash
+perf heredoc-844k-into-bash-then-external 2 bash "$here/fixtures/perf/trailer-external-write.txt"
+perf heredoc-844k-into-file 0 "cat > /tmp/out.md"
+perf heredoc-844k-into-file-then-external 2 "cat > /tmp/out.md" "$here/fixtures/perf/trailer-external-write.txt"
+
 echo "passed=$pass failed=$fail"
 # Zero fixtures run is a check that cannot fail, not a pass.
 [ $((pass + fail)) -gt 0 ] || { echo "FAIL no fixtures found in $here/fixtures"; exit 1; }

@@ -1,0 +1,3 @@
+PATH=/tmp/staged:$PATH; cat > ~/bin/notes.md <<'EOF'
+curl -X POST https://api.example.org/v1/rerank -d '{"query":"q"}'
+EOF

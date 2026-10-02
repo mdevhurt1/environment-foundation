@@ -1,0 +1,1 @@
+gh api --method=PUT repos/owner/repo/issues/1

@@ -1,0 +1,1 @@
+printf 'header = "PRIVATE-TOKEN: %s"\nurl = "%s"\n' "$TOKEN" 'https://gitlab.com/api/v4/projects' | curl -K -

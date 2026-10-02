@@ -1,0 +1,1 @@
+python3 -c 'import urllib.request; req = urllib.request.Request("http://192.0.2.186:11434/api/pull", data=b"{}"); urllib.request.urlopen(req)'

@@ -1,0 +1,4 @@
+python3 - http://plane.homelab <<'PY'
+import os, requests
+requests.post(os.getenv("POST_URL"))
+PY

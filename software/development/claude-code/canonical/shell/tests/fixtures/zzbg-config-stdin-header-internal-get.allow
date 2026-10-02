@@ -1,0 +1,3 @@
+curl -s -K - "http://plane.homelab/api/v1/workspaces/x/" <<'EOF'
+header = "X-API-Key: abc"
+EOF

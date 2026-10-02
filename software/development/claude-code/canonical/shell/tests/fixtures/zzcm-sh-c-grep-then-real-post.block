@@ -1,0 +1,1 @@
+sh -c 'grep -n "@router.post(" app.py; python3 -c "import requests; requests.post(\"https://api.example.com/items\", data={})"'

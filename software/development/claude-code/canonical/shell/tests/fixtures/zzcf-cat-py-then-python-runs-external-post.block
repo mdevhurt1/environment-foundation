@@ -1,0 +1,6 @@
+cat > /tmp/post.py <<'EOF'
+import json,urllib.request
+r=urllib.request.Request("https://api.example.com/v1/items",data=json.dumps({"a":1}).encode(),method="POST")
+print(urllib.request.urlopen(r).status)
+EOF
+python3 /tmp/post.py

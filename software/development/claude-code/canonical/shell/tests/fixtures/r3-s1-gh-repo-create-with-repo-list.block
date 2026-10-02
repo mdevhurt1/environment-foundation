@@ -1,0 +1,1 @@
+gh repo list acme && gh repo create acme/x --private

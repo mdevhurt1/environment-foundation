@@ -1,0 +1,1 @@
+echo "posted: `curl -sS -d @spec.md https://api.example.org/v1/rerank`" > ~/vault/20-surface/company/tasks/topic-rerank/log.md

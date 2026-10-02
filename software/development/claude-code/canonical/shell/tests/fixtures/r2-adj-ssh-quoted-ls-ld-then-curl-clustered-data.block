@@ -1,0 +1,1 @@
+ssh host.homelab 'ls -ld /srv/app; curl -sd x https://example.org/x'

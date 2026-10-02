@@ -1,0 +1,13 @@
+D=~/vault/20-surface/company/tasks/AI_ST-99/outbound
+mkdir -p "$D"
+printf '%s\n' 'Publish the guard as its own repo' > "$D/repo.title"
+printf '%s\n' 'https://github.com/mhurt/outbound-guard' > "$D/repo.target"
+cat > "$D/repo.body.md" <<'EOF'
+Steps for the CEO to run from their own terminal:
+
+    gh repo create mhurt/outbound-guard --public --source . --push
+    gh release create v1.0.0 --notes-file NOTES.md
+    curl -X POST -H "Authorization: token $GH_TOKEN" https://api.github.com/repos/mhurt/outbound-guard/topics -d '{"names":["hooks"]}'
+
+Prior art searched: https://github.com/search?q=outbound+guard and https://gitlab.com/explore
+EOF

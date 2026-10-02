@@ -8,10 +8,16 @@ One instruction file and one skills directory for every agent runtime on this ma
 | Path | Purpose |
 |---|---|
 | `canonical/AGENTS.md` | Global instructions. Installed at `~/.agents/AGENTS.md` and linked from `~/.codex/AGENTS.md`, `~/.pi/agent/AGENTS.md`, the Antigravity path in `~/.agents/agy-context-path`, and imported by `~/.claude/CLAUDE.md` |
-| `canonical/skills/` | Kept skills: plane-api, systematic-debugging, test-driven-development, verification-before-completion, brainstorming, writing-plans. Installed at `~/.agents/skills`, linked from `~/.claude/skills` and `~/.gemini/config/skills`; Codex and Pi read `~/.agents/skills` natively (`~/.codex/skills` stays a real directory holding Codex's managed `.system/` skills) |
-| `scripts/install.sh` | Creates the symlinks above and the five `~/.claude` links; `~/.claude/settings.json` is maintained by hand |
+| `canonical/skills/` | Kept skills: brainstorming, end-conversation, plane-api, ring-maintenance, session-start, systematic-debugging, test-driven-development, verification-before-completion, writing-plans. Installed at `~/.agents/skills`; `~/.claude/skills` and `~/.gemini/config/skills` are real directories holding one link per kept skill (beside any vendor-synced skills), so re-run `scripts/install.sh` after adding a skill; Codex and Pi read `~/.agents/skills` natively (`~/.codex/skills` stays a real directory holding Codex's managed `.system/` skills) |
+| `scripts/install.sh` | Creates the symlinks above and the six `~/.claude` links (it is their one owner; `claude-code/scripts/uninstall.sh` never touches them); seeds `~/.claude/settings.json` from `claude-code/canonical/settings.json` only when absent; an existing one is kept by hand and never edited |
 | `scripts/verify.sh` | Proves each runtime reads the file, sees `~/.config/agents/env`, and lists the skills |
 | `scripts/uninstall.sh` | Removes the symlinks above; dry run without `--yes`. Never touches `~/.config/agents/env` or the vault |
+| `review/` | Operator-owned review rubric, four-seat panel protocol, and file-only prompt and tally tools (not installed); see `review/README.md` |
+
+To see the skills Antigravity actually discovers, run `cd ~ && agy -p "/skills"`: print mode answers
+read-only slash commands without a model turn and prints one `name<TAB>description` line per skill
+(built-ins included). Asking the model "list your skills" is not a check: skills inject only names and
+descriptions, so its answer depends on the model, not on discovery (AI_ST-119).
 
 Secrets reach every shell through `~/.config/agents/env`, written by `~/environment-secrets/install.sh`.
 

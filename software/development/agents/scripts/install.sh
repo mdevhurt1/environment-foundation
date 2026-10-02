@@ -14,11 +14,12 @@ canon="$(cd "$SCRIPT_DIR/.." && pwd)/canonical"
 link() { # link <target> <linkpath>
     mkdir -p "$(dirname "$2")"
     if [ -e "$2" ] && [ ! -L "$2" ]; then
-        mv "$2" "$2.pre-reset-$(date +%Y%m%d-%H%M%S)"
-        echo "moved existing $2 aside"
+        local bak; bak="$2.pre-reset-$(date +%Y%m%d-%H%M%S)"
+        mv "$2" "$bak"
+        log_warn "moved existing $2 aside to $bak"
     fi
     ln -sfn "$1" "$2"
-    echo "linked $2 -> $1"
+    log_ok "linked $2 -> $1"
 }
 
 # Shared location every runtime can be pointed at
@@ -26,12 +27,12 @@ link "$canon/AGENTS.md" "$HOME/.agents/AGENTS.md"
 skill_root() { # skill_root <dir>: a real dir holding one symlink per kept skill (AI_ST-107)
     # A whole-dir link let Claude Code's cloud skill sync write synced/ into canonical/ (2026-09-23);
     # with per-skill links, vendor content lands beside our skills, never inside the repo.
-    if [ -L "$1" ]; then rm "$1"; echo "replaced dir link $1 with a real dir"; fi
+    if [ -L "$1" ]; then rm "$1"; log_info "replaced dir link $1 with a real dir"; fi
     mkdir -p "$1"
     for s in "$HOME"/.agents/skills/*/; do link "${s%/}" "$1/$(basename "$s")"; done
     for l in "$1"/*; do # prune our links whose skill is gone
         if [ -L "$l" ] && [ ! -e "$l" ]; then
-            case "$(readlink "$l")" in "$HOME/.agents/skills/"*) rm "$l"; echo "pruned $l";; esac
+            case "$(readlink "$l")" in "$HOME/.agents/skills/"*) rm "$l"; log_info "pruned $l";; esac
         fi
     done
 }
@@ -50,7 +51,7 @@ if [ -d "$canon/skills" ]; then
         dest="$HOME/.claude/skills/synced"
         [ -e "$dest" ] && dest="$dest.from-canonical-$(date +%Y%m%d-%H%M%S)"   # never mv into an existing synced/
         mv "$vendor_tmp/synced" "$dest" && rmdir "$vendor_tmp"
-        echo "moved vendor synced/ out of canonical/ to $dest"
+        log_info "moved vendor synced/ out of canonical/ to $dest"
     fi
     # Antigravity CLI: global skills root per its embedded docs
     skill_root "$HOME/.gemini/config/skills"
@@ -71,6 +72,17 @@ link "$cc/model-policy.json"            "$HOME/.claude/model-policy.json"
 link "$cc/shell/cc-memory-inject.sh"    "$HOME/.claude/cc-memory-inject.sh"
 link "$cc/shell/cc-outbound-guard.sh"   "$HOME/.claude/cc-outbound-guard.sh"
 link "$cc/shell/cc-memory-index-regen.sh" "$HOME/.claude/cc-memory-index-regen.sh"   # AI_ST-116: the path MEMORY.md names
+
+# Claude Code settings.json: a real file the app writes back to, so never a link. Seed it from
+# canonical/ only when absent (a fresh machine otherwise gets no hooks); never edit an existing one (AI_ST-128).
+st="$HOME/.claude/settings.json"
+if [ -L "$st" ]; then
+    log_warn "left $st alone: it is a symlink (-> $(readlink "$st")); settings.json must be a real file"
+    log_warn "  fix: save anything you want from it, then rm $st and re-run install.sh to seed a real file"
+elif [ ! -e "$st" ]; then
+    cp "$cc/settings.json" "$st"
+    log_ok "seeded $st from $cc/settings.json (absent before; later edits are yours)"
+fi
 
 # Antigravity CLI: its global context path, recorded once in ~/.agents/agy-context-path
 if [ -f "$HOME/.agents/agy-context-path" ]; then

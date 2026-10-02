@@ -183,6 +183,7 @@ while IFS= read -r e; do
     [ -n "$e" ] && INTERNAL="$INTERNAL|$(entry_regex "$e")"
 done <<<"$INTERNAL_ENTRIES"
 INTERNAL="($INTERNAL)"
+INTERNAL_RE="^${INTERNAL}\$"
 
 reason=""
 
@@ -211,8 +212,18 @@ reason=""
 # false BLOCK: a legitimate internal query URL (`http://plane.homelab/x?y=1`)
 # used to carry its query into the host token and miss the allowlist.
 url_targets() {
-    grep -oE 'https?://[^ /?#]+' <<<"$1" \
-        | sed -e 's|https\?://||' -e 's/^[^@]*@//' -e 's/:[0-9]*$//' -e 's/\.$//'
+    # Bash builtins into the global array TARGETS, not grep|sed and not a $(…)
+    # fork: this runs once per client segment, and a large heredoc yields
+    # thousands of those (AI_ST-126). Same extraction, same strips.
+    local rest=$1 h
+    TARGETS=()
+    while [[ "$rest" =~ https?://([^ /?#]+) ]]; do
+        rest=${rest#*"${BASH_REMATCH[0]}"}
+        h=${BASH_REMATCH[1]}
+        [[ "$h" == *@* ]] && h=${h#*@}
+        [[ "$h" =~ ^(.*):[0-9]*$ ]] && h=${BASH_REMATCH[1]}
+        TARGETS+=("${h%.}")
+    done
 }
 
 # outbound_target -- true when this request should be treated as leaving the
@@ -227,11 +238,12 @@ url_targets() {
 # message, a false allow costs a post that cannot be unpublished.
 outbound_target() {
     local h internal=0
-    while IFS= read -r h; do
+    url_targets "$1"
+    for h in "${TARGETS[@]}"; do
         [ -n "$h" ] || continue
-        grep -qE "^${INTERNAL}$" <<<"$h" || return 0
+        [[ "$h" =~ $INTERNAL_RE ]] || return 0
         internal=1
-    done <<<"$(url_targets "$1")"
+    done
     [ "$internal" -eq 1 ] && return 1
     return 0
 }
@@ -253,13 +265,36 @@ outbound_target() {
 # The subject is a segment of $nq, NOT the lowercased $n: case is load-bearing
 # here, because curl's -F (form POST) and -f (fail silently) are different
 # flags and folding case would conflate them.
+# Bash's own ERE (no grep per test, AI_ST-126); `\b` is spelled as a non-word
+# character or end of input, which is what it meant here.
+WS_RE=(
+    ' -X ?(POST|PUT|PATCH|DELETE)([^A-Za-z0-9_]|$)'
+    ' --request[= ](POST|PUT|PATCH|DELETE)([^A-Za-z0-9_]|$)'
+    ' (-d|-F|-T)[ =]?[^ -]'
+    ' --(data|data-raw|data-binary|data-ascii|data-urlencode|json|form|form-string|upload-file)[= ]'
+    ' (-K|--config)[= ]?(-|[^ -])'
+    ' --(post-data|post-file|body-data|body-file)[= ]'
+    ' --method[= ](POST|PUT|PATCH|DELETE)([^A-Za-z0-9_]|$)'
+)
+# Clustered short flags (`-sSXPOST`, `-sd x`) are curl's spelling, but `ls -ld`
+# is not: they count only in the text after the client word, so a read-only
+# `ssh h 'ls -ld d; command -v curl'` is not a body flag (review r2 ADJ-1).
+CLIENT_RE='(^|[[:space:];&|(`=,:])([^[:space:]]*/)?(curl|wget)([[:space:]]|$)'
+WS_CLUSTER_RE=(
+    ' -[A-Za-z]*X ?(POST|PUT|PATCH|DELETE)([^A-Za-z0-9_]|$)'
+    ' -[A-Za-z]*[dFT][ =]?[^ -]'
+)
 write_shaped_http() {
-    has ' -X ?(POST|PUT|PATCH|DELETE)\b' "$1" \
-    || has ' --request[= ](POST|PUT|PATCH|DELETE)\b' "$1" \
-    || has ' (-d|-F|-T)[ =]?[^ -]' "$1" \
-    || has ' --(data|data-raw|data-binary|data-ascii|data-urlencode|json|form|form-string|upload-file)[= ]' "$1" \
-    || has ' (-K|--config)[= ]?[^ -]' "$1" \
-    || has ' --(post-data|post-file|method=(POST|PUT|PATCH|DELETE))' "$1"
+    local re args=$1
+    for re in "${WS_RE[@]}"; do
+        [[ "$1" =~ $re ]] && return 0
+    done
+    [[ "$args" =~ $CLIENT_RE ]] || return 1
+    args=" ${args#*"${BASH_REMATCH[0]}"}"
+    for re in "${WS_CLUSTER_RE[@]}"; do
+        [[ "$args" =~ $re ]] && return 0
+    done
+    return 1
 }
 
 # raw_http_write -- true when some pipeline segment invokes curl or wget with a
@@ -300,17 +335,78 @@ write_shaped_http() {
 #   - the no-jq path, where $cmd is raw JSON and its quotes are JSON's;
 #   - unbalanced quotes;
 #   - `$'…'` ANSI-C quoting, where `\'` does not close the quote.
-# A command with no quote characters keeps the old split too: nothing in it can
-# swallow a separator.
+# Quote-free commands still use the masking scanner: an unquoted -d value can
+# name an internal URL while the request target stays unresolved.
+#
+# Newlines (AI_ST-125). An unquoted line end separates commands exactly as `;`
+# does, so a var-URL call on one line no longer borrows an internal host from
+# an echo on the next; a backslash-continued line still joins. A heredoc body
+# is no longer part of the command it feeds: each body line becomes its own
+# segment. That stops a body naming an internal URL from rescuing a `-d @-
+# "$URL"` call, while a `bash <<EOF` body that runs curl is still scanned, line
+# by line, as the code it is.
 #
 # awk, not a bash character loop: the loop took ~7s on a 60KB heredoc, and this
-# runs on every Bash call. Newlines fold to spaces as in $nq (continuations
-# included); a heredoc body stays in its command's segment, as it always has.
-# awk prints UNBALANCED instead of segments when a quote never closes.
+# runs on every Bash call. awk prints UNBALANCED instead of segments when a
+# quote never closes.
+#
+# Latency (AI_ST-126). Everything that runs once per client segment is bash
+# builtins: write_shaped_http, url_targets, outbound_target and resolve_vars
+# spawn no process and open no $(…) subshell, and a variable's resolution is
+# cached per name. Measured 2026-10-02 on an 844 KB `cat > f <<'EOF'` whose
+# body has ~1500 `curl -X POST` lines (tests/test-outbound-guard.sh, `perf`):
+#   URL literal in each line            c44f0e8  9.3 s  ->  0.6 s
+#   URL in "$API", assigned on line 1   c44f0e8 56-77 s ->  0.8-1.0 s
+# The runner fails any run over 5 s.
+# flat_segments -- the quote-blind split: every `|;&` and every line end that a
+# backslash does not continue. $nq folds newlines away, so it cannot be the
+# input (AI_ST-125): a var-URL call on one line and an internal echo on the
+# next would merge into one segment. On the no-jq path $cmd is raw JSON, whose
+# line ends are the two characters `\n` (and a continuation is `\\\n`).
+flat_segments() {
+    local s=$cmd
+    if [ "$cmd" = "$payload" ]; then
+        s=$(sed -e 's/\\\\\\n/ /g' -e 's/\\n/\n/g' <<<"$s")
+    fi
+    sed -e ':a' -e '/\\$/{N;s/\\\n/ /;ba' -e '}' <<<"$s" \
+        | tr -d '"'"'" | tr '\t' ' ' | sed -e 's/\\ / /g' -e 's/  */ /g' | tr '|;&' '\n'
+}
+
+mask_data_heredocs() {
+    printf '%s\n' "$cmd" | LC_ALL=C awk '
+        {
+            line = $0
+            original = original line "\n"
+            if (active) {
+                t = line; if (dash) sub(/^\t+/, "", t)
+                if (t == marker) { active = 0; masked = masked line "\n"; next }
+                if (!quoted && (index(line, "$(") || index(line, "`"))) masked = masked line "\n"
+                else masked = masked "\n"
+                next
+            }
+            # Assignments in a quoted heredoc are literal data; only shell
+            # code outside its body can change how a later command resolves.
+            if (line ~ /(^|[[:space:];&|])(PATH|BASH_ENV|ENV|IFS|LD_[A-Z_]*|PROMPT_COMMAND|SHELLOPTS|BASHOPTS|BASH_[A-Z_]*|GLOBIGNORE)=/) danger = 1
+            masked = masked line "\n"
+            if (line ~ /(^|[;|&[:space:]])cat[[:space:]][^|;&]*>[[:space:]]*[^|;&]*<</ \
+                || line ~ /(^|[;|&[:space:]])git[[:space:]]+commit[^|;&]*-F[[:space:]]+-[^|;&]*<</) {
+                if (match(line, /<<-?["\047\\]?[A-Za-z_][A-Za-z_0-9]*["\047\\]?/)) {
+                    token = substr(line, RSTART, RLENGTH); marker = token
+                    sub(/^<<-?/, "", marker); quoted = (marker ~ /["\047\\]/)
+                    gsub(/["\047\\]/, "", marker)
+                    dash = (token ~ /^<<-/); active = 1
+                }
+            }
+        }
+        END { printf "%s", (danger ? original : masked) }
+    '
+}
 segments() {
-    local out
-    if [ "$cmd" = "$payload" ] || [[ "$cmd" == *"\$'"* ]] || [[ "$cmd" != *[\"\']* ]]; then
-        tr '|;&' '\n' <<<"$nq"; return
+    local out sanitized
+    sanitized=$(mask_data_heredocs)
+    local cmd=$sanitized
+    if [ "$cmd" = "$payload" ] || [[ "$cmd" == *"\$'"* ]]; then
+        flat_segments; return
     fi
     out=$(printf '%s\n' "$cmd" | LC_ALL=C awk -v sq="'" '
         function endword(   raw, bare) {
@@ -319,12 +415,12 @@ segments() {
             if (mask) { o = substr(o, 1, length(o) - length(raw)) "BODY"; mask = 0; return }
             if (bare ~ /(^|\/)curl$/) client = "curl"
             else if (bare ~ /(^|\/)wget$/) client = "wget"
-            if (bare ~ /^--(data|data-raw|data-binary|data-ascii|data-urlencode|json|form|form-string|header|referer|post-data|body-data)$/ \
-                || (client == "curl" && bare ~ /^-[dFHe]$/)) { mask = 1; return }
-            if (match(bare, /^--(data|data-raw|data-binary|data-ascii|data-urlencode|json|form|form-string|header|referer|post-data|body-data)=/))
+            if (bare ~ /^--(data|data-raw|data-binary|data-ascii|data-urlencode|json|form|form-string|header|referer|post-data|body-data|body-file)$/ \
+                || (client == "curl" && bare ~ /^-[A-Za-z]*[dFHe]$/)) { mask = 1; return }
+            if (match(bare, /^--(data|data-raw|data-binary|data-ascii|data-urlencode|json|form|form-string|header|referer|post-data|post-file|body-data|body-file)=/))
                 o = substr(o, 1, length(o) - length(raw)) substr(bare, 1, RLENGTH) "BODY"
-            else if (client == "curl" && bare ~ /^-[dFHe]./)
-                o = substr(o, 1, length(o) - length(raw)) substr(bare, 1, 2) "BODY"
+            else if (client == "curl" && match(bare, /^-[A-Za-z]*[dFHe]./))
+                o = substr(o, 1, length(o) - length(raw)) substr(bare, 1, RLENGTH - 1) "BODY"
         }
         function sep(c) { return c == "|" || c == ";" || c == "&" }
         { s = s $0 "\n" }
@@ -337,15 +433,19 @@ segments() {
                     if (c != "\n") { o = o (sep(c) ? "\n" : c); continue }
                     cm = 0
                 }
-                if (q == "" && c == "\n") {            # end of a shell line
-                    endword(); mask = 0; client = ""; o = o " "
+                if (q == "" && c == "\n") {            # end of a shell line: a separator
+                    endword(); mask = 0; client = ""; o = o "\n"
                     for (k = 1; k <= nh; k++) {          # heredoc bodies: data up to the terminator
                         while (i < n) {
                             j = index(substr(s, i + 1), "\n"); if (j == 0) j = n - i
                             line = substr(s, i + 1, j - 1); i = i + j
                             t = line; if (hd[k]) sub(/^\t+/, "", t)
-                            if (t == ht[k]) { o = o line " "; break }
-                            gsub(/[|;&]/, "\n", line); o = o line " "
+                            if (t == ht[k]) { o = o "\n"; break }
+                            gsub(/[|;&]/, "\n", line)
+                            # Each body line is its own segment, never part of the
+                            # command it feeds; a trailing backslash joins the next
+                            # line, so `bash <<EOF` bodies keep continued curl calls.
+                            if (sub(/\\$/, "", line)) o = o line " "; else o = o line "\n"
                         }
                     }
                     nh = 0; continue
@@ -377,28 +477,256 @@ segments() {
             print o
         }')
     if [ "$out" = UNBALANCED ]; then
-        tr '|;&' '\n' <<<"$nq"; return
+        flat_segments; return
     fi
     # Normalise each segment exactly as $nq is built.
     printf '%s\n' "$out" | tr -d '"'"'" | tr '\t' ' ' | sed -e 's/\\ / /g' -e 's/  */ /g'
 }
 
+# Source written by a cat heredoc is executable only if this same Bash call
+# later runs the output path. A syntax check (bash -n, py_compile) is not a run.
+executed_written_sources() {
+    [[ "$cmd" == *cat*'<<'* || "$cmd" == *printf*'>'* ]] || return 0
+    printf '%s\n' "$cmd" | LC_ALL=C awk -v join="${1-}" '
+        function escape_re(s,    i,c,out) {
+            out = ""
+            for (i = 1; i <= length(s); i++) {
+                c = substr(s,i,1)
+                if (index("\\.^$*+?()[]{}|",c)) out = out "\\"
+                out = out c
+            }
+            return out
+        }
+        function runs(path,tail,    p,direct,prefix,runner) {
+            p = escape_re(path)
+            direct = (path ~ /^\.\// ? p : "[.]\\/" p)
+            prefix = "(nohup[[:space:]]+|timeout[[:space:]]+[^[:space:]]+[[:space:]]+|env[[:space:]]+([^[:space:]]+=[^[:space:]]+[[:space:]]+)*|uv[[:space:]]+run[[:space:]]+)*"
+            runner = "(bash|sh|zsh|source|[.]|python[0-9.]*|node|bun|ruby|perl|php|deno)"
+            if (tail ~ "(^|[[:space:];&|])" prefix "(" runner "[[:space:]]+" p "|" direct ")([[:space:];&|]|$)") return 1
+            # An absolute or ~ path runs as a command word, not as an argument
+            # such as `chmod +x /tmp/x.sh` (review r3 S3).
+            return path ~ /^[\/~]/ && tail ~ "(^|[;&|(\n]|(then|do|else|exec|sudo)[[:space:]])[[:space:]]*" prefix p "([[:space:];&|)]|$)"
+        }
+        { lines[NR] = $0 }
+        END {
+            for (i = 1; i <= NR; i++) {
+                line = lines[i]
+                if (line ~ /(^|[;|&[:space:]])printf[[:space:]]/ &&
+                    match(line, />[[:space:]]*[^[:space:]<|;&]+/)) {
+                    path = substr(line,RSTART,RLENGTH); sub(/^>[[:space:]]*/,"",path)
+                    tail = substr(line,RSTART+RLENGTH)
+                    for (k = i + 1; k <= NR; k++) tail = tail "\n" lines[k]
+                    if (runs(path,tail)) {
+                        source = line
+                        sub(/^.*printf[[:space:]]+/,"",source)
+                        sub(/[[:space:]]*>.*$/, "",source)
+                        print source
+                    }
+                    continue
+                }
+                if (line !~ /(^|[;|&[:space:]])cat[[:space:]]/ ||
+                    !match(line, />[[:space:]]*[^[:space:]<|;&]+[[:space:]]*<<-?["\047\\]?[A-Za-z_][A-Za-z_0-9]*["\047\\]?/)) continue
+                spec = substr(line,RSTART,RLENGTH)
+                path = spec; sub(/^>[[:space:]]*/,"",path); sub(/[[:space:]]*<<.*$/, "",path)
+                marker = spec; sub(/^.*<<-?/,"",marker); gsub(/["\047\\]/,"",marker)
+                dash = (spec ~ /<<-/); body = ""
+                for (j = i + 1; j <= NR; j++) {
+                    t = lines[j]; if (dash) sub(/^\t+/,"",t)
+                    if (t == marker) break
+                    body = body lines[j] "\n"
+                }
+                if (j > NR) continue
+                tail = ""
+                for (k = j + 1; k <= NR; k++) tail = tail lines[k] "\n"
+                if (runs(path,tail)) {
+                    if (join) { gsub(/\n/, " ", body); print body }
+                    else printf "%s", body
+                }
+                i = j
+            }
+        }
+    '
+}
+written_segments() {
+    local cmd=$1
+    segments
+}
+
+# resolve_vars <segment> -- the segment with each `$NAME` / `${NAME}` replaced
+# by every URL this same command assigns to NAME (AI_ST-125).
+#
+# Splitting on newlines made a common, legitimate script shape fail closed:
+#   PROM=http://prom.internal:9090
+#   curl --data-urlencode "query=up" "$PROM/api/v1/query"
+# It only ever passed because the two lines merged into one segment, which is
+# also exactly how a var-URL call borrowed an unrelated echo's internal host.
+# Resolving the variable keeps the first and refuses the second. Narrowly:
+#   - only a segment that is nothing but `[export|local|declare|readonly]
+#     NAME=scheme://...` counts as an assignment. A prefix assignment
+#     (`NAME=... curl "$NAME"`) does not: the shell expands $NAME before the
+#     prefix takes effect, so its URL is never the target;
+#   - EVERY assignment of NAME is substituted, so a later external value still
+#     reaches the host test, and any assignment that is not a plain URL, or a
+#     `read`/`for`/`mapfile`/`+=`/`printf -v` that could set NAME, leaves the
+#     reference unresolved, which fails closed as before.
+# What NAME resolves to is a property of the whole command, so it is worked out
+# once per name and cached (AI_ST-126): resolving it per client segment grepped
+# the full segment list each time, and an 844 KB heredoc of `"$PROM/..."` lines
+# took 56 s, most of the hook timeout. An empty value means unresolved.
+declare -A VAR_VALS=()
+var_values() {
+    local name=$1 vals="" line
+    if ! grep -qE "(^| )(for|read|mapfile|readarray|getopts|select|unset)( [^ ]+)* ${name}( |$)|(^| )${name}\+=|-v ${name}( |$)" <<<"$segs"; then
+        while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            if [[ "$line" =~ ^\ ?((export|local|declare|readonly)\ )?${name}=(https?://[^\ ]+)\ ?$ ]]; then
+                vals="$vals ${BASH_REMATCH[3]}"
+            else
+                vals=""; break
+            fi
+        done <<<"$(grep -E "(^| )${name}=" <<<"$segs")"
+        [[ "$vals" == *'$'* ]] && vals=""
+        # A use before the first assignment reads the inherited value (r3 S17).
+        if [ -n "$vals" ]; then
+            local first_use first_set
+            first_use=$(grep -m1 -nE "\\\$\\{?${name}([^A-Za-z0-9_]|$)" <<<"$segs")
+            first_set=$(grep -m1 -nE "(^| )${name}=" <<<"$segs")
+            [ -n "$first_use" ] && [ "${first_use%%:*}" -lt "${first_set%%:*}" ] && vals=""
+        fi
+    fi
+    VAR_VALS[$name]=$vals
+}
+
+# Sets RESOLVED rather than printing it, so the caller needs no $(…) subshell
+# and the VAR_VALS cache survives between segments.
+resolve_vars() {
+    local seg=$1 rest=$1 name vals
+    local -A seen=()
+    while [[ "$rest" =~ \$\{?([A-Za-z_][A-Za-z0-9_]*) ]]; do
+        rest=${rest#*"${BASH_REMATCH[0]}"}
+        name=${BASH_REMATCH[1]}
+        [ -n "${seen[$name]+x}" ] && continue
+        seen[$name]=1
+        [ -n "${VAR_VALS[$name]+x}" ] || var_values "$name"
+        vals=${VAR_VALS[$name]}
+        [ -n "$vals" ] || continue
+        while [[ "$seg" =~ ^(.*)\$(\{${name}\}|${name})([^A-Za-z0-9_].*)?$ ]]; do
+            seg="${BASH_REMATCH[1]}$vals${BASH_REMATCH[3]}"
+        done
+    done
+    RESOLVED=$seg
+}
+
+config_stdin_text() {
+    local seg=$1 previous=$2 source_name p
+    local function_call_re='(^|[[:space:](])([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*$'
+    CONFIG_TEXT=""
+    # A preceding printf/echo is visible only when it is piped to this curl:
+    # the previous segment must end in a pipe, not in `;` (review r3 S18).
+    p=${previous# }; p=${p% }
+    [[ -n "$p" && ( "$nq" == *"$p |"* || "$nq" == *"$p|"* ) ]] || previous=""
+    if [[ "$cmd" =~ \|[[:space:]]*curl[^[:cntrl:]]*(-K|--config)[=\ ]?- ]] \
+       && [[ "$previous" =~ (^|[[:space:]])(printf|echo)[[:space:]] ]]; then
+        CONFIG_TEXT=$previous; return 0
+    fi
+    if [[ "$cmd" =~ \|[[:space:]]*curl[^[:cntrl:]]*(-K|--config)[=\ ]?- ]] \
+       && [[ "$previous" =~ $function_call_re ]]; then
+        source_name=${BASH_REMATCH[2]}
+        CONFIG_TEXT=$(grep -E "(^|[[:space:]])${source_name}\(\)[[:space:]]*\{" <<<"$cmd")
+        if [[ "$CONFIG_TEXT" =~ (^|[[:space:]])(printf|echo)[[:space:]] ]]; then return 0; fi
+        CONFIG_TEXT=""
+    fi
+    if [[ "$seg" == *'<<<'* ]]; then
+        CONFIG_TEXT=${seg#*<<<}; return 0
+    fi
+    # The config heredoc is bound to its curl opener. Flatten its body so the
+    # caller can inspect directives without treating them as shell commands.
+    CONFIG_TEXT=$(printf '%s\n' "$cmd" | LC_ALL=C awk '
+        {
+            line = $0
+            if (active) {
+                t = line; if (dash) sub(/^\t+/, "", t)
+                if (t == marker) { if (body != "") print body; active = 0; next }
+                body = body "\n" line; next
+            }
+            if (line ~ /(^|[[:space:]])curl[[:space:]]/ && line ~ /(-K|--config)[= ]?-/ \
+                && match(line, /<<-?["\047\\]?[A-Za-z_][A-Za-z_0-9]*["\047\\]?/)) {
+                token = substr(line, RSTART, RLENGTH); marker = token
+                sub(/^<<-?/, "", marker); gsub(/["\047\\]/, "", marker)
+                dash = (token ~ /^<<-/); active = 1; body = ""
+            }
+        }
+    ')
+    [ -n "$CONFIG_TEXT" ]
+}
+config_write_directive() {
+    local config=${1//\\n/$'\n'}
+    # `printf '%s\n' 'url = …' 'data = …'`: quote stripping joined the
+    # arguments onto one line, so a directive can start at any word (r3 S5).
+    local a='^[[:space:]]*'
+    [[ "$config" == *%* ]] && a='(^|[[:space:]])'
+    grep -qiE "$a"'(--)?(data(-raw|-binary|-ascii|-urlencode)?|json|form(-string)?|upload-file)([[:space:]]*[=:]|[[:space:]])|'"$a"'(-d|-F|-T)([[:space:]]*[=:]|[[:space:]])|'"$a"'(--)?(request|-X)([[:space:]]*[=:]|[[:space:]])[[:space:]]*[^[:alnum:]]?(POST|PUT|PATCH|DELETE)([^[:alpha:]]|$)' <<<"$config"
+}
 raw_http_write() {
-    local seg
-    grep -qE "${B}(curl|wget)\b" <<<"$nq" || return 1
-    # One grep picks the client segments (the same test the loop used to run per
-    # segment): a big heredoc splits into thousands, and a process each cost seconds.
+    local seg segs config_urls previous="" config_flag written printf_runs=0
+    local client_re=$CLIENT_RE
+    grep -qE "${B}([^ ]*/)?(curl|wget)\b" <<<"$nq" || return 1
+    segs=$(segments)
+    written=$(executed_written_sources)
+    [ -n "$written" ] && segs+=$'\n'"$(written_segments "$written")"
+    # printf output piped into a shell is code, not file content (review r3 S4).
+    local printf_shell_re='(^|[[:space:];&|(])printf[[:space:]].*\|[[:space:]]*(sudo[[:space:]]+)?([^[:space:]]*/)?(bash|sh|zsh|dash|ksh)([[:space:]]|$)'
+    [[ "$nq" =~ $printf_shell_re ]] && printf_runs=1
+    # Keep client detection in Bash: a big heredoc splits into thousands of
+    # segments, and spawning a process per segment costs seconds.
     while IFS= read -r seg; do
         [ -n "$seg" ] || continue
-        write_shaped_http "$seg" || continue
-        outbound_target "$(tr '[:upper:]' '[:lower:]' <<<"$seg")" && return 0
-    done <<<"$(segments | grep -E "${B}(curl|wget)\b")"
+        # A printf argument is file content, even when it spells a curl call.
+        # Its written body is inspected separately if the file is run below.
+        if [ "$printf_runs" -eq 0 ] && [[ "$seg" =~ (^|[[:space:]])printf[[:space:]] ]]; then previous=$seg; continue; fi
+        if ! [[ "$seg" =~ $client_re ]]; then previous=$seg; continue; fi
+        if ! write_shaped_http "$seg"; then previous=$seg; continue; fi
+        # A stdin config can name another URL besides one on the command line.
+        # Its url directives are data segments, so check them with this client.
+        # curl accepts `url = x`, `url: x`, `url x` and `--url x` in a config.
+        if [[ "$seg" =~ (^|[[:space:]])(-K|--config)[=\ ]?-($|[[:space:]]) ]]; then
+            if config_stdin_text "$seg" "$previous"; then
+                [[ "$CONFIG_TEXT" == printf\ * ]] && CONFIG_TEXT=${CONFIG_TEXT#printf }
+                [[ "$CONFIG_TEXT" == echo\ * ]] && CONFIG_TEXT=${CONFIG_TEXT#echo }
+                if [[ "$CONFIG_TEXT" == *%* || "$CONFIG_TEXT" =~ (^|[[:space:]])(printf|echo)[[:space:]] ]]; then
+                    # Argument form: quote stripping joined the arguments, so
+                    # a url directive can start at any word, as the write
+                    # directives can (config_write_directive). Take each one
+                    # with its value (review r4 seat2-F1, seat3-F2, seat4-F1).
+                    config_urls=$(grep -oiE '(^|[[:space:]])(--)?url([[:space:]]*[=:]|[[:space:]])[[:space:]]*[^[:space:]]+' <<<"${CONFIG_TEXT//\\n/$'\n'}")
+                else
+                    config_urls=$(grep -iE '^[[:space:]]*(--)?url([[:space:]]*[=:]|[[:space:]])' <<<"${CONFIG_TEXT//\\n/$'\n'}")
+                fi
+                config_flag=$seg
+                config_flag=${config_flag//--config=-/}; config_flag=${config_flag//--config -/}
+                config_flag=${config_flag//-K-/}; config_flag=${config_flag//-K -/}
+                if ! config_write_directive "$CONFIG_TEXT" && ! write_shaped_http "$config_flag"; then
+                    previous=$seg; continue
+                fi
+                if [ -n "$config_urls" ] && outbound_target "${config_urls,,}"; then return 0; fi
+                if [ -n "$config_urls" ] && [[ "$seg" != *'$'* ]]; then
+                    url_targets "$seg"
+                    [ "${#TARGETS[@]}" -eq 0 ] && { previous=$seg; continue; }
+                fi
+            fi
+        fi
+        # Prefix assignments are not targets (see resolve_vars).
+        while [[ "$seg" =~ ^\ ?[A-Za-z_][A-Za-z0-9_]*=[^\ ]*\ (.*)$ ]]; do seg=${BASH_REMATCH[1]}; done
+        [[ "$seg" == *'$'* ]] && { resolve_vars "$seg"; seg=$RESOLVED; }
+        outbound_target "${seg,,}" && return 0
+        previous=$seg
+    done <<<"$segs"
     return 1
 }
 
-# scripted_http_write -- true when interpreter code on the command line
-# carries an EXPLICIT HTTP-write shape whose visible targets are not all
-# internal (INFRA-86; the interpreter analogue of INFRA-67's curl inversion).
+# scripted_http_write -- true when command text carries an EXPLICIT scripted
+# HTTP-write shape whose call targets are outbound or cannot be resolved
+# (INFRA-86; the scripted analogue of INFRA-67's curl inversion).
 #
 # The shapes are tighter than the legacy github branch's loose substrings, on
 # purpose. `put` matches inside `--input`, `requests\.` matches a read, and
@@ -420,16 +748,372 @@ raw_http_write() {
 # The host test is outbound_target, same as the curl branch, and its fail-
 # closed clause is load-bearing here: an explicit write call whose URL lives
 # in a variable or an environment lookup names no host this guard can check,
-# and is refused rather than guessed at — the `curl -K` stance. Reads stay
-# untouched: a call with none of these shapes never reaches the host test.
+# and is refused rather than guessed at — the `curl -K` stance. Keep the
+# whole-command shape test so code in heredoc bodies remains visible. Decide
+# the target on each write-shaped segment, including heredoc body lines, so an
+# unrelated internal URL cannot allow a write elsewhere. An interpreter-name
+# filter would miss versioned Python and other runtimes that execute the same
+# explicit write calls.
+scripted_write_shape() {
+    has '\.(post|put|patch|delete)\(' "$1" \
+      || has '[-]>(post|put|patch|delete)\(' "$1" \
+      || has '\bmethod ?[:=] ?\\?(post|put|patch|delete)\b' "$1" \
+      || has 'request\( ?\\?(post|put|patch|delete)\b' "$1" \
+      || has '\burlopen\([^)]*\bdata=' "$1"
+}
+scripted_call_target() {
+    local rest=$1 arg match second found=0 unresolved=0 unresolved_args=""
+    local call_re='(\.|->)(post|put|patch|delete)\(([^,)]*)'
+    while [[ "$rest" =~ $call_re ]]; do
+        arg=${BASH_REMATCH[3]}; rest=${rest#*"${BASH_REMATCH[0]}"}; found=1
+        url_targets "$arg"
+        if [ "${#TARGETS[@]}" -eq 0 ]; then unresolved=1; unresolved_args+=" $arg"
+        elif outbound_target "$arg"; then return 0; fi
+    done
+    if [[ "$1" == *fetch\(* ]] && has '\bmethod ?[:=] ?\\?(post|put|patch|delete)\b' "$1"; then
+        rest=$1
+        local fetch_re='fetch\(([^,)]*)'
+        while [[ "$rest" =~ $fetch_re ]]; do
+            arg=${BASH_REMATCH[1]}; rest=${rest#*"${BASH_REMATCH[0]}"}; found=1
+            url_targets "$arg"
+            if [ "${#TARGETS[@]}" -eq 0 ]; then unresolved=1; unresolved_args+=" $arg"
+            elif outbound_target "$arg"; then return 0; fi
+        done
+    fi
+    if has '\burlopen\([^)]*\bdata=' "$1"; then
+        rest=$1
+        local urlopen_re='urlopen\(([^,)]*)'
+        while [[ "$rest" =~ $urlopen_re ]]; do
+            arg=${BASH_REMATCH[1]}; rest=${rest#*"${BASH_REMATCH[0]}"}; found=1
+            url_targets "$arg"
+            if [ "${#TARGETS[@]}" -eq 0 ]; then unresolved=1; unresolved_args+=" $arg"
+            elif outbound_target "$arg"; then return 0; fi
+        done
+    fi
+    if [[ "$1" == *request\(* ]]; then
+        rest=$1
+        local request_re='request\(([^,)]*),[[:space:]]*([^,)]*)'
+        while [[ "$rest" =~ $request_re ]]; do
+            match=${BASH_REMATCH[0]}; arg=${BASH_REMATCH[1]}; second=${BASH_REMATCH[2]}
+            if [[ "$arg" =~ ^\\?(post|put|patch|delete)$ ]]; then arg=$second; fi
+            rest=${rest#*"$match"}; found=1
+            url_targets "$arg"
+            if [ "${#TARGETS[@]}" -eq 0 ]; then unresolved=1; unresolved_args+=" $arg"
+            elif outbound_target "$arg"; then return 0; fi
+        done
+    fi
+    if [ "$unresolved" -eq 1 ]; then
+        # An environment lookup has no source-local value to resolve.
+        [[ "$unresolved_args" =~ (environ\[|process\.env\.) ]] && return 0
+        # Resolve only URLs tied to an argument of this call (or to a helper
+        # parameter used by it). An unrelated assignment cannot rescue it.
+        local urls="" line val scan name related_args=$unresolved_args helper calls params token helper_call_re head
+        local definition_re='def[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)\(([^)]*)\)'
+        if [[ "${SCRIPT_SOURCE,,}" =~ $definition_re ]]; then
+            helper=${BASH_REMATCH[1]}
+            params=${BASH_REMATCH[2],,}
+            for token in ${params//,/ }; do
+                token=${token%%=*}
+                if [[ "$unresolved_args" =~ (^|[^[:alnum:]_])${token}([^[:alnum:]_]|$) ]]; then
+                    calls=$SCRIPT_SOURCE
+                    helper_call_re="(^|[^[:alnum:]_])${helper}\\(([^)]*)\\)"
+                    while [[ "$calls" =~ $helper_call_re ]]; do
+                        related_args+=" ${BASH_REMATCH[2]}"
+                        calls=${calls#*"${BASH_REMATCH[0]}"}
+                    done
+                    break
+                fi
+            done
+        fi
+        [[ "$related_args" =~ (environ\[|process\.env\.) ]] && return 0
+        local assignment_re='(^|[[:space:];])([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=[[:space:]]*f?[^[:alnum:]]?(https?://[^[:space:]),]+)'
+        local request_re='(^|[[:space:];])([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=[[:space:]]*[^=;]*[Rr]equest\(f?[^[:alnum:]]?(https?://[^[:space:]),]+)'
+        while IFS= read -r line; do
+            scan=$line
+            while [[ "$scan" =~ $assignment_re ]]; do
+                match=${BASH_REMATCH[0]}
+                case ${BASH_REMATCH[2],,} in
+                    data|body|json|headers|note) scan=${scan#*"$match"}; continue;;
+                esac
+                val=${BASH_REMATCH[3]}
+                name=${BASH_REMATCH[2],,}
+                [[ "${related_args,,}" =~ (^|[^[:alnum:]_])${name}([^[:alnum:]_]|$) ]] || { scan=${scan#*"$match"}; continue; }
+                val=${val//\"/}; val=${val//\'/}
+                urls="$urls $val"
+                scan=${scan#*"$match"}
+            done
+            scan=$line
+            while [[ "$scan" =~ $request_re ]]; do
+                match=${BASH_REMATCH[0]}
+                name=${BASH_REMATCH[2],,}; val=${BASH_REMATCH[3]}
+                [[ "$unresolved_args" =~ (^|[^[:alnum:]_])${name}([^[:alnum:]_]|$) ]] || { scan=${scan#*"$match"}; continue; }
+                val=${val//\"/}; val=${val//\'/}
+                urls="$urls $val"
+                scan=${scan#*"$match"}
+            done
+        done <<<"${SCRIPT_SOURCE:-$1}"
+        # An interpreter argument is the call target only when the call reads
+        # argv, directly or through a variable assigned from it. Otherwise
+        # (`os.getenv(...)`, an unseen name) the target stays unresolved and
+        # the opener URL cannot stand in for it (review r4 seat3-F1).
+        local argv_tied=0
+        if [[ "$related_args" == *argv* ]]; then
+            argv_tied=1
+        else
+            for token in $related_args; do
+                [[ "$token" =~ ^[a-z_][a-z0-9_]*$ ]] || continue
+                [[ "${SCRIPT_SOURCE,,}" =~ (^|[^[:alnum:]_])${token}[[:space:]]*=[[:space:]]*[^[:space:]=]*argv ]] && { argv_tied=1; break; }
+            done
+        fi
+        if [ "$argv_tied" -eq 1 ] && [[ "$SCRIPT_SOURCE" == *'<<'* ]]; then
+            # Only the interpreter's own arguments (`python3 - URL <<EOF`), not
+            # a URL in an earlier command on the opener line (review r3 N1).
+            head=${SCRIPT_SOURCE%%<<*}; head=${head##*[;&|]}
+            url_targets "$head"
+            for val in "${TARGETS[@]}"; do urls="$urls http://$val"; done
+        fi
+        [ -n "$urls" ] && { outbound_target "$urls"; return $?; }
+        return 0
+    fi
+    [ "$found" -eq 1 ] && return 1
+    # A method marker without a recognized call target cannot be allowlisted
+    # by a URL in a body, option or unrelated expression.
+    return 0
+}
+script_sources() {
+    local seg previous=""
+    local inline_re='(^|[[:space:];&|(`=,:])([^[:space:]]*/)?(python[0-9.]*|node|bun|deno|perl|ruby|php|sh|bash|zsh)[[:space:]]+(-[cepEr]|--eval|--print)[[:space:]]'
+    # Inline code belongs to its interpreter; a grep -E pattern is data. The
+    # quoted argument remains one segment even when it contains semicolons.
+    while IFS= read -r seg; do
+        if [[ "$seg" =~ $inline_re ]]; then
+            printf '%s\n' "$seg"
+        elif [[ "$seg" =~ (^|[[:space:]])(python[0-9.]*|node|bun|deno|perl|ruby|php)([[:space:]]|$) ]] \
+             && [[ "$cmd" =~ \|[[:space:]]*(python[0-9.]*|node|bun|deno|perl|ruby|php)([[:space:]]|$) ]] \
+             && scripted_write_shape "${previous,,}"; then
+            printf '%s\n' "$previous"
+        fi
+        previous=$seg
+    done <<<"$(segments)"
+    # A heredoc body belongs to its consuming command, not to each body line.
+    # Data sinks such as cat > file and git commit -F - do not execute it.
+    printf '%s\n' "$cmd" | LC_ALL=C awk '
+        function emit() { if (execute && body != "") print opener " " body; body = "" }
+        {
+            line = $0
+            if (active) {
+                t = line; if (dash) sub(/^\t+/, "", t)
+                if (t == marker) { emit(); active = 0; next }
+                body = body " " line; next
+            }
+            if (match(line, /<<-?["\047\\]?[A-Za-z_][A-Za-z_0-9]*["\047\\]?/)) {
+                token = substr(line, RSTART, RLENGTH); marker = token
+                sub(/^<<-?/, "", marker); gsub(/["\047\\]/, "", marker)
+                dash = (token ~ /^<<-/); active = 1; body = ""; opener = line
+                execute = (line !~ /(^|[;|&[:space:]])(cat|tee|echo|printf)[[:space:]][^|;&]*<<[^|;&]*$/ \
+                           && line !~ /(^|[;|&[:space:]])git[[:space:]]+commit[^|;&]*<<[^|;&]*$/)
+                if (line ~ /<<[^|;&]*\|[[:space:]]*[^[:space:]]+/) execute = 1
+            }
+        }
+    ' | tr -d '"'"'"
+    executed_written_sources joined | tr -d '"'"'"
+}
 scripted_http_write() {
-    { has '\.(post|put|patch|delete)\(' \
-      || has '[-]>(post|put|patch|delete)\(' \
-      || has '\bmethod ?[:=] ?\\?(post|put|patch|delete)\b' \
-      || has 'request\( ?\\?(post|put|patch|delete)\b' \
-      || { has '\burlopen\(' && has '\bdata='; }
-    } || return 1
-    outbound_target "$n"
+    local seg lower segs fragment filtered
+    # A fragment whose command word is a search tool carries a pattern, which
+    # is data. The word must START the fragment (after an optional ssh host or
+    # sh -c wrapper and its quote), so a payload that merely says `grep` stays
+    # code (review r2 N4), while a quoted remote `sh -c "cd d; grep …"` still
+    # drops its pattern (r2 ADJ-2). `sed = x.post(…)` is an assignment, not a
+    # search.
+    local search_re='^[[:space:]]*(ssh[[:space:]]+[^[:space:]]+[[:space:]]+)?((sh|bash|zsh)[[:space:]]+-c[[:space:]]+)?["'\'']?(grep|rg|sed)[[:space:]]+[^=[:space:]]'
+    scripted_write_shape "$n" || return 1
+    segs=$(segments)
+    while IFS= read -r seg; do
+        lower=${seg,,}
+        # A search pattern is data. Shell code after its semicolon still runs.
+        if [[ "$lower" =~ (^|[^[:alnum:]_])(grep|rg|sed)[[:space:]] ]]; then
+            filtered=""
+            # A wrapper's `&&`, `||` and ` | ` end a fragment too (review r3 S8).
+            lower=${lower//&&/;}; lower=${lower//||/;}; lower=${lower// | /;}
+            while [[ "$lower" == *';'* ]]; do
+                fragment=${lower%%;*}; lower=${lower#*;}
+                [[ "$fragment" =~ $search_re ]] || filtered+=" $fragment"
+            done
+            [[ "$lower" =~ $search_re ]] || filtered+=" $lower"
+            seg=$filtered; lower=$filtered
+        fi
+        scripted_write_shape "$lower" || continue
+        [[ "$seg" == *'$'* ]] && { resolve_vars "$seg"; seg=$RESOLVED; }
+        SCRIPT_SOURCE=$seg
+        scripted_call_target "${seg,,}" && return 0
+    done <<<"$(script_sources)"
+    return 1
+}
+
+# --- the sink test: file writes are data, not calls (AI_ST-109) ----------
+#
+# Ruled 2026-09-25 (day-plan-2026-09-25/outbound-guard-ruling.md): when EVERY
+# sink of a command is a file path, client text inside it is data and the guard
+# stands down. Writing a file that contains `curl` posts nothing; if the file is
+# run later, it is gated in this Bash call or the later one. Nine recorded
+# false blocks (harness-friction.md, 2026-09-14..29) were all this shape: a
+# heredoc creating a spec whose body cites URLs, the guard's own prescribed
+# outbound draft quoting the `gh repo create` it stages, a script authored with
+# `curl -K -` and its URL in a variable, and a `printf >>` of a friction line
+# quoting the call it describes. Each ended at the Write tool and prevented
+# nothing.
+#
+# It runs on the RAW $cmd: $nq has lost the quotes and line ends that say what
+# is code and what is data. It stands down only when it can show the whole
+# command is inert, and fails closed (gates as before) on anything else:
+#   - every simple command's first word is one of a short list that cannot
+#     reach the network: cat tee printf echo mkdir touch chmod cd true. Every
+#     other word, including bash/sh/python/ssh/sudo/env/xargs, `{`, `(`, `if`,
+#     `for`, a `$VAR` command and a prefix assignment (`X=1 cat`), gates. A
+#     plain assignment (`D=~/vault/...`) is allowed, except to PATH, IFS,
+#     BASH_ENV, ENV, LD_* and the like, which change what a later word runs;
+#   - so a pipe or heredoc into an interpreter, a `bash script.sh` after the
+#     write, and a real client anywhere on the line all keep the gate on: one
+#     network sink is enough;
+#   - command and process substitution (`$(`, a backtick, `<(`, `>(`) execute,
+#     so they gate: outside single quotes in code, and anywhere in the body of
+#     an UNQUOTED heredoc, which the shell expands. A quoted heredoc
+#     (`<<'EOF'`, `<<"EOF"`, `<<\EOF`) body is literal and is not inspected;
+#   - `$'…'` quoting, an unclosed quote, an unterminated heredoc, any mention
+#     of /dev/tcp or /dev/udp (a redirect there IS a network sink), and the
+#     no-jq path (raw JSON, quotes unknowable) all gate.
+# The gh/forge branches sit behind this test too: L15 (2026-09-22) was the gh
+# branch refusing a draft that quoted `gh repo create`, so the ruling's "those
+# branches never false-positived" was already out of date. A command made only
+# of the words above cannot run gh.
+#
+# Residual risk, accepted by the ruling: a staged file could be executed by
+# something this hook never sees (cron, systemd, a remote host).
+files_only_sinks() {
+    [ "$cmd" != "$payload" ] || return 1
+    [[ "$cmd" == *[Dd][Ee][Vv]/[Tt][Cc][Pp]* || "$cmd" == *[Dd][Ee][Vv]/[Uu][Dd][Pp]* ]] && return 1
+    [ "$(printf '%s\n' "$cmd" | LC_ALL=C awk -v sq="'" '
+        function endword(   bare) {
+            if (!inw) return
+            inw = 0; bare = w; w = ""
+            if (redir) { redir = 0; return }          # a redirect target is a path
+            if (ncw) return                           # an argument
+            # NAME=value, with no quote before the `=` (qw: where a quote first began)
+            # Not one that changes how later words run: PATH could resolve `cat`
+            # to anything.
+            if (match(bare, /^[A-Za-z_][A-Za-z0-9_]*=/) && (qw == 0 || qw > RLENGTH)) {
+                if (bare ~ /^(PATH|BASH_ENV|ENV|IFS|LD_[A-Z_]*|PROMPT_COMMAND|SHELLOPTS|BASHOPTS|BASH_[A-Z_]*|GLOBIGNORE)=/) bad = 1
+                assign = 1; return
+            }
+            if (assign) bad = 1                       # prefix assignment: gate
+            else if (bare !~ /^(cat|tee|printf|echo|mkdir|touch|chmod|cd|true)$/) bad = 1
+            ncw = 1
+        }
+        function newcmd() { endword(); ncw = 0; assign = 0; redir = 0 }
+        function addc(c) { if (!inw) { inw = 1; qw = 0 } ; w = w c }
+        { s = s $0 "\n" }
+        END {
+            n = length(s); q = ""; bad = 0; nh = 0
+            for (i = 1; i <= n && !bad; i++) {
+                c = substr(s, i, 1); c2 = substr(s, i, 2)
+                if (q == sq) { if (c == sq) q = ""; else w = w c; continue }
+                if (q == "\"") {
+                    if (c == "\\") { w = w substr(s, i + 1, 1); i++; continue }
+                    if (c2 == "$(" || c == "`") { bad = 1; break }
+                    if (c == "\"") q = ""; else w = w c
+                    continue
+                }
+                # unquoted shell code
+                if (c == "\\") {
+                    if (substr(s, i + 1, 1) == "\n") { i++; continue }
+                    addc(substr(s, i + 1, 1)); i++; continue
+                }
+                if (c2 == "$(" || c == "`" || c2 == "$" sq || c2 == "<(" || c2 == ">(" || c == "(" || c == ")") { bad = 1; break }
+                if (c == sq || c == "\"") { if (!inw) { inw = 1; qw = 0 } ; if (!qw) qw = length(w) + 1; q = c; continue }
+                if (c == "#" && !inw) { while (i < n && substr(s, i + 1, 1) != "\n") i++; continue }
+                if (c == "\n") {
+                    newcmd()
+                    for (k = 1; k <= nh; k++) {               # heredoc bodies: data
+                        found = 0
+                        while (i < n) {
+                            j = index(substr(s, i + 1), "\n"); if (j == 0) j = n - i
+                            line = substr(s, i + 1, j - 1); i = i + j
+                            t = line; if (hd[k]) sub(/^\t+/, "", t)
+                            if (t == ht[k]) { found = 1; break }
+                            if (!hq[k] && (index(line, "$(") || index(line, "`"))) { bad = 1; break }
+                        }
+                        if (!found) bad = 1
+                    }
+                    nh = 0; continue
+                }
+                if (c == ";" || c == "|" || c == "&") { newcmd(); continue }
+                if (c == " " || c == "\t") { endword(); continue }
+                if (c2 == "<<" && substr(s, i + 2, 1) != "<") {
+                    endword(); j = i + 2; dash = 0
+                    if (substr(s, j, 1) == "-") { dash = 1; j++ }
+                    while (substr(s, j, 1) ~ /[ \t]/) j++
+                    wd = ""
+                    while (j <= n && substr(s, j, 1) !~ /[ \t\n;|&<>()]/) { wd = wd substr(s, j, 1); j++ }
+                    quoted = (wd ~ /["\047\\]/); gsub(/["\047\\]/, "", wd)
+                    if (wd == "") { bad = 1; break }
+                    nh++; ht[nh] = wd; hd[nh] = dash; hq[nh] = quoted
+                    i = j - 1; continue
+                }
+                if (c == "<" || c == ">") {               # redirect: the next word is a target
+                    endword()
+                    while (substr(s, i + 1, 1) ~ /[<>&|]/) i++
+                    redir = 1; continue
+                }
+                addc(c)
+            }
+            if (q != "") bad = 1
+            if (!bad) { newcmd(); if (nh) bad = 1 }
+            print (bad ? "GATE" : "FILES")
+        }')" = FILES ]
+}
+
+files_only_sinks && exit 0
+
+# graphql_queries_literal -- true when the raw command has a graphql query
+# field and EVERY such field's value is literal text: one single-quoted string,
+# a double-quoted string without `$` or backticks, or a bare word without them
+# and without the `@file` form. A "$Q" or @file query hides whether it is a
+# mutation, so it fails closed (review r2 ADJ-3). The raw $cmd is read, not a
+# segment, because a multi-line query reaches the segment loop with its quotes
+# already stripped.
+graphql_queries_literal() {
+    local rest=$cmd found=0
+    local field_re=' (-[fF]|--field|--raw-field)[= ]?query=(.*)$'
+    local value_re='^('\''[^'\'']*'\''|"[^"$`\\]*"|[^[:space:]"'\''$`@\\][^[:space:]"'\''$`\\]*)([[:space:]]|$)'
+    while [[ "$rest" =~ $field_re ]]; do
+        rest=${BASH_REMATCH[2]}; found=1
+        [[ "$rest" =~ $value_re ]] || return 1
+    done
+    [ "$found" -eq 1 ]
+}
+gh_api_write() {
+    local seg lower
+    has "${B}gh api\\b" || return 1
+    while IFS= read -r seg; do
+        lower=${seg,,}
+        has "${B}gh api\\b" "$lower" || continue
+        if has 'graphql' "$lower" \
+           && has ' (-[fF]|--field|--raw-field)[= ]?query=' "$seg" \
+           && graphql_queries_literal \
+           && ! has '\bmutation\b' "$lower" \
+           && ! has ' (-x ?|--method[ =])(put|patch|delete)\b' "$lower" \
+           && ! has ' --input\b' "$lower"; then
+            continue
+        fi
+        if has ' (-x ?|--method[ =])(post|put|patch|delete)\b' "$lower" \
+           || has ' (--field|--raw-field|--input)\b' "$lower" \
+           || has ' -[fF] ?[^ -]' "$seg" \
+           || { has 'graphql' "$lower" && has 'mutation' "$lower"; }; then
+            return 0
+        fi
+    done <<<"$(segments)"
+    return 1
 }
 
 # --- gh: the verbs that publish -----------------------------------------
@@ -442,8 +1126,9 @@ if   has "${B}gh issue (create|comment|edit|close|reopen|delete|lock|unlock|pin|
     reason="gh issue subcommand that writes to a public tracker"
 elif has "${B}gh pr (create|comment|edit|review|merge|close|reopen|ready)\b"; then
     reason="gh pr subcommand that writes to a public repository"
-elif has "${B}gh (release|gist|repo|secret|workflow|label|milestone|project) (create|edit|delete|upload|set|run|clone-noop)\b" \
-     && ! has "${B}gh repo (clone|view|list|fork|sync)\b"; then
+elif has "${B}gh (release|gist|repo|secret|workflow|label|milestone|project) (create|edit|delete|upload|set|run|clone-noop)\b"; then
+    # No read-verb exemption: a `gh repo view` elsewhere in the command must not
+    # excuse a publish such as `gh repo create` (review r3 S1, operator ruling).
     reason="gh subcommand that creates or edits public content"
 elif has "${B}gh alias (set|delete)\b"; then
     # `gh alias set pc 'pr create'` renames the forbidden verb into one no
@@ -452,12 +1137,7 @@ elif has "${B}gh alias (set|delete)\b"; then
     reason="gh alias definition (an alias can rename a posting verb past this gate)"
 
 # --- gh api: read or write, decided by flags that carry no verb -----------
-elif has "${B}gh api\b" && {
-        has ' (-x|--method) (post|put|patch|delete)\b' \
-        || has ' (--field|--raw-field|--input)\b' \
-        || has ' -[fF] ?[^ -]' "$nq" \
-        || { has 'graphql' && has 'mutation'; }
-     }; then
+elif gh_api_write; then
     reason="gh api call that mutates (explicit verb, a field flag, or a graphql mutation)"
 
 # --- raw HTTP leaving the LAN --------------------------------------------
@@ -486,8 +1166,8 @@ elif raw_http_write; then
 # they catch sloppier github spellings than the explicit shapes do, they are
 # safe only while scoped to that one host, and keeping them means this change
 # strictly widens what is refused.
-elif has "${B}(python3?|node|perl|ruby|php) " && scripted_http_write; then
-    reason="interpreter code making an HTTP write to a host outside the internal allowlist (or one it never names)"
+elif scripted_http_write; then
+    reason="scripted HTTP write to a host outside the internal allowlist (or one it never names)"
 elif has "${B}(python3?|node|perl|ruby|php) " \
      && has 'github\.com' \
      && has '(post|put|patch|delete|urlopen|requests\.|http\.client|fetch\()'; then

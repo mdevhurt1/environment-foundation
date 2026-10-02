@@ -1,0 +1,5 @@
+python3 - http://plane.homelab/api <<'PY'
+import sys, requests
+target = sys.argv[1]
+requests.post(target, data='x')
+PY

@@ -1,0 +1,4 @@
+cat > oneshot.sh <<'EOF'
+curl -d x https://api.example.com/items
+EOF
+nohup bash oneshot.sh

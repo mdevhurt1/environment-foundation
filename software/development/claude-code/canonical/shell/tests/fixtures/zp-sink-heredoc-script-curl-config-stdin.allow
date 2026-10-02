@@ -1,0 +1,10 @@
+mkdir -p ~/bin && cat > ~/bin/jira-worklist.sh <<'EOF'
+#!/usr/bin/env bash
+# Fetch my own worklist. The token stays out of argv: curl reads it as config on stdin.
+set -euo pipefail
+. ~/.config/optimax/jira.env
+curl -sS -K - -G --data-urlencode 'jql=assignee = currentUser() AND statusCategory != Done' "$JIRA_URL/rest/api/3/search/jql" <<CFG
+header = "Authorization: Bearer $JIRA_TOKEN"
+CFG
+EOF
+chmod +x ~/bin/jira-worklist.sh

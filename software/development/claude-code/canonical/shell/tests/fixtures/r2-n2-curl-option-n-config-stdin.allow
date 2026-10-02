@@ -1,0 +1,1 @@
+printf 'url = "http://plane.homelab/x"\ndata = "x"\n' | curl -n -K -

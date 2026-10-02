@@ -1,0 +1,1 @@
+bun -e "fetch('http://plane.homelab/api', {method: 'POST', body: 'ok'})"

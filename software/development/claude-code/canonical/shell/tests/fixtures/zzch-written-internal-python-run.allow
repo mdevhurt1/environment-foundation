@@ -1,0 +1,6 @@
+cat > /tmp/internal-post.py <<'EOF'
+import urllib.request
+r=urllib.request.Request("http://plane.homelab/api/x",data=b"x",method="POST")
+urllib.request.urlopen(r)
+EOF
+python3 /tmp/internal-post.py

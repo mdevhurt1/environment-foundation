@@ -1,0 +1,1 @@
+python3 -c 'import requests; requests.get("https://example.org/readme"); requests.post("http://plane.homelab/x")'

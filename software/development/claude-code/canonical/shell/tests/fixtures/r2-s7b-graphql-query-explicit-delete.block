@@ -1,0 +1,1 @@
+gh api graphql -X DELETE -f query='{ viewer { login } }'

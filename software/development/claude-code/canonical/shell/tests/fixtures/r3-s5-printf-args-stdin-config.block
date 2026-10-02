@@ -1,0 +1,1 @@
+printf '%s\n' 'url = https://example.com/a' 'data = x' | curl -K -

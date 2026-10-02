@@ -1,0 +1,6 @@
+cat > /tmp/oneshot.sh <<'EOF'
+curl -sS -m 30 https://api.example.com/v1/chat/completions \
+ -H 'Content-Type: application/json' \
+ -d '{"model":"m","messages":[]}'
+EOF
+bash /tmp/oneshot.sh | head -40

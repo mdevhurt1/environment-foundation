@@ -1,0 +1,1 @@
+echo "import requests; requests.post('https://example.org/x')" | python3

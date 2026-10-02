@@ -1,0 +1,6 @@
+cat > x.sh <<'EOF'
+curl -K - <<'CONF'
+url = "https://example.org/api"
+request = "POST"
+CONF
+EOF

@@ -1,0 +1,3 @@
+URL=http://plane.homelab/x
+URL=https://hooks.slack.com/services/T000/B000/XXXX
+curl -s -X POST -d '{"text":"hi"}' "$URL"

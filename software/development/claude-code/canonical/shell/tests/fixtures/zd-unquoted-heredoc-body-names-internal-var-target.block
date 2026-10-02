@@ -1,0 +1,3 @@
+curl -s -X POST -d @- $URL <<EOF
+link http://plane.homelab/x
+EOF

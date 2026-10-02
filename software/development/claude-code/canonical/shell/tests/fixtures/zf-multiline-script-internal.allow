@@ -1,0 +1,8 @@
+cd /tmp
+curl -s -X POST -H "X-Api-Key: $PLANE_API_KEY" -d '{"name":"a; b"}' http://plane.homelab/api/v1/workspaces/homelab/projects/p/issues/
+echo "created; next"
+curl -s -X PATCH \
+  -H "Content-Type: application/json" \
+  -d '{"name":"b"}' \
+  "http://plane.homelab/api/v1/workspaces/homelab/projects/p/issues/i/"
+curl -s https://example.com/readme.txt | grep -F needle

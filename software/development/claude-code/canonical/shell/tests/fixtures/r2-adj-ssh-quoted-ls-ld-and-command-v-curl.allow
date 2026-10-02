@@ -1,0 +1,1 @@
+ssh host.homelab 'ls -ld /srv/app; command -v gh curl python3'

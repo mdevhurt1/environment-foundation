@@ -14,10 +14,11 @@ begins.
 - [ ] Step 2: Make sure the memory index has been read
 - [ ] Step 3: Surface relevant vault context
 - [ ] Step 4: Reconcile the Plane issue (read-mostly; one write)
+- [ ] Step 4b: Flag overdue rituals (read-only; silent when nothing is due)
 - [ ] Step 5: Establish one-sentence session goal (ask only if not already supplied)
 - [ ] Step 6: Remind the operator how to close the session
 
-Steps 1–4 are probes — batch their commands into as few shell calls as
+Steps 1–4b are probes — batch their commands into as few shell calls as
 possible and narrate one line per step, so the ritual stays cheap.
 
 ## Step 1: Detect launch context
@@ -25,7 +26,8 @@ possible and narrate one line per step, so the ritual stays cheap.
 ```bash
 pwd
 git rev-parse --show-toplevel 2>/dev/null || echo "(not in a repo)"
-for f in AGENTS.md CLAUDE.md; do test -f "$f" && echo "found per-project $f"; done
+top=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+for f in AGENTS.md CLAUDE.md; do test -f "$top/$f" && echo "found per-project $top/$f"; done
 ```
 
 A per-project instruction file adds to the global AGENTS.md; read it if
@@ -67,6 +69,27 @@ With an issue: read it using the `plane-api` skill. If its state is in the
 state — **that is the only write**. Report the issue line (identifier,
 title, state before → after); it informs Step 5. **Never block here**: on
 any network, auth, or lookup failure, warn in one line and continue.
+
+## Step 4b: Flag overdue rituals
+
+Recurring bookends are manual, so nothing else notices when one slips
+(AI_ST-102). Run the helper; it is read-only and always exits 0:
+
+```bash
+bash ~/.agents/skills/session-start/ritual-check.sh
+```
+
+It checks the newest `state/ring-health-*.md` (weekly ring-maintenance;
+flags past 7 days), the agents `verify.sh` last-run marker
+(`~/.local/state/harness/verify-last.json`; silent while absent), the
+running Node major against its upstream end-of-life date, and INFRA-93's
+target date (the monthly Gitea update check; one Plane GET, skipped
+without `PLANE_API_KEY` or network).
+
+It prints a `Rituals overdue:` block only when something is overdue.
+Relay that block verbatim as one item of the session report; do not run
+the rituals yourself or let them displace the session goal — the operator
+decides. No output → say nothing about rituals.
 
 ## Step 5: Establish the one-sentence session goal
 

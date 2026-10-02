@@ -1,0 +1,1 @@
+gh api graphql -F query=@/tmp/q.graphql

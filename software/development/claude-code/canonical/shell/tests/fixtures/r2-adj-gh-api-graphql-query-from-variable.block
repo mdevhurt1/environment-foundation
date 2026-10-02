@@ -1,0 +1,1 @@
+Q=$(cat /tmp/q.graphql); gh api graphql -f query="$Q"

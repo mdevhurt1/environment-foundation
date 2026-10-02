@@ -1,0 +1,1 @@
+python3 -c 'import requests, os, urllib.request; URL=os.getenv("URL"); safe=urllib.request.Request("http://plane.homelab/x"); requests.post(URL)'

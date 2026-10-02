@@ -42,7 +42,8 @@ check "timer enabled" systemctl --user is-enabled --quiet ollama-gpu-watch.timer
 check "timer active" systemctl --user is-active --quiet ollama-gpu-watch.timer
 
 # Last run: a service that has never run has an empty ExecMainStartTimestamp.
-# That is legitimately "not yet", so warn rather than fail.
+# Report it, but do not let it skip the metric checks below: an absent or stale
+# metric file is a failed acceptance check whether or not systemd recorded a start.
 last_start="$(systemctl --user show -p ExecMainStartTimestamp --value ollama-gpu-watch.service 2>/dev/null)"
 if [ -z "$last_start" ] || [ "$last_start" = "n/a" ]; then
   log_warn "service has not run yet (systemctl --user start ollama-gpu-watch.service)"
@@ -51,11 +52,11 @@ else
   status="$(systemctl --user show -p ExecMainStatus --value ollama-gpu-watch.service 2>/dev/null)"
   log_info "last run: $last_start result=$result exit=$status"
   log_info "last probe line: $(journalctl --user -u ollama-gpu-watch.service -n 20 -o cat 2>/dev/null | grep -E '^(OK|FAIL) ollama-gpu:' | tail -n1)"
-  # The timer fires every 15 min; 40 min of silence means it is not running.
-  check "metric file written within the last 40 min: $PROM" \
-    bash -c "test -n \"\$(find '$PROM' -mmin -40 2>/dev/null)\""
-  check "metric file reports ollama_gpu_ok 0 or 1" bash -c "grep -qE '^ollama_gpu_ok\\{.*\\} [01]\$' '$PROM'"
 fi
+# The timer fires every 15 min; 40 min of silence means it is not running.
+check "metric file written within the last 40 min: $PROM" \
+  bash -c "test -n \"\$(find '$PROM' -mmin -40 2>/dev/null)\""
+check "metric file reports ollama_gpu_ok 0 or 1" bash -c "grep -qE '^ollama_gpu_ok\\{.*\\} [01]\$' '$PROM'"
 
 # Capability, not provenance: run the probe once, live, without --bench.
 if [ -x "$PROBE" ]; then

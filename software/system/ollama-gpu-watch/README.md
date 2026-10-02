@@ -110,9 +110,13 @@ sudo tee /usr/local/sbin/restart-ollama-on-nvidia-change >/dev/null <<'SH'
 # Restart the ollama container when the installed nvidia driver packages change.
 stamp=/var/lib/ollama-nvidia-pkg.stamp
 now=$(dpkg-query -W -f='${Package} ${Version}\n' 'nvidia-driver-*' 'libnvidia-compute-*' 2>/dev/null | sort)
-[ "$now" = "$(cat "$stamp" 2>/dev/null)" ] && exit 0
+# First run: record the installed versions; there is no change to act on yet.
+[ -f "$stamp" ] || { printf '%s\n' "$now" > "$stamp"; exit 0; }
+[ "$now" = "$(cat "$stamp")" ] && exit 0
+if docker ps -q --filter name='^ollama$' | grep -q .; then
+  docker restart ollama >/dev/null 2>&1 || exit 1   # keep the old stamp: the next dpkg run retries
+fi
 printf '%s\n' "$now" > "$stamp"
-docker ps -q --filter name='^ollama$' | grep -q . && docker restart ollama >/dev/null 2>&1
 exit 0
 SH
 sudo chmod 0755 /usr/local/sbin/restart-ollama-on-nvidia-change

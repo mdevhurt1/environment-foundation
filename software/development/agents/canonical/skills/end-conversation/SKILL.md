@@ -185,15 +185,17 @@ Skip unless this session created the git worktree it is working in
 it). Then prompt:
 
 > "Fold the worktree?
->   m) merge clean changes back to <base-branch>
->   p) open a draft PR
+>   m) print the commands to merge it into <base-branch>
+>   p) print the commands to push it and open a draft PR
 >   k) keep the worktree for later (default)
 >   d) discard (DESTRUCTIVE — confirmation required)"
 
-Default **keep**. Merging and opening a PR are outward actions AGENTS.md
-reserves for an explicit ask, and the answer here is that ask. For `m`/`p`,
-verify the git commands succeeded before declaring done. For `d`, require
-the operator to type the worktree name.
+Default **keep**. Merging, pushing and opening a PR are operator-reserved,
+and a menu letter is not an explicit ask: for `m` and `p`, run nothing that
+merges or pushes. Hand the operator the exact commands instead, naming the
+base branch (often `main`), the remote and the branch, and say that `p`
+pushes. For `d`, require the operator to type the worktree name.
+**Unattended sessions** never prompt here: keep the worktree.
 
 ## Step 8: Final report
 

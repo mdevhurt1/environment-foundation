@@ -183,6 +183,7 @@ while IFS= read -r e; do
     [ -n "$e" ] && INTERNAL="$INTERNAL|$(entry_regex "$e")"
 done <<<"$INTERNAL_ENTRIES"
 INTERNAL="($INTERNAL)"
+INTERNAL_RE="^${INTERNAL}\$"
 
 reason=""
 
@@ -211,8 +212,18 @@ reason=""
 # false BLOCK: a legitimate internal query URL (`http://plane.homelab/x?y=1`)
 # used to carry its query into the host token and miss the allowlist.
 url_targets() {
-    grep -oE 'https?://[^ /?#]+' <<<"$1" \
-        | sed -e 's|https\?://||' -e 's/^[^@]*@//' -e 's/:[0-9]*$//' -e 's/\.$//'
+    # Bash builtins into the global array TARGETS, not grep|sed and not a $(…)
+    # fork: this runs once per client segment, and a large heredoc yields
+    # thousands of those (AI_ST-126). Same extraction, same strips.
+    local rest=$1 h
+    TARGETS=()
+    while [[ "$rest" =~ https?://([^ /?#]+) ]]; do
+        rest=${rest#*"${BASH_REMATCH[0]}"}
+        h=${BASH_REMATCH[1]}
+        [[ "$h" == *@* ]] && h=${h#*@}
+        [[ "$h" =~ ^(.*):[0-9]*$ ]] && h=${BASH_REMATCH[1]}
+        TARGETS+=("${h%.}")
+    done
 }
 
 # outbound_target -- true when this request should be treated as leaving the
@@ -227,11 +238,12 @@ url_targets() {
 # message, a false allow costs a post that cannot be unpublished.
 outbound_target() {
     local h internal=0
-    while IFS= read -r h; do
+    url_targets "$1"
+    for h in "${TARGETS[@]}"; do
         [ -n "$h" ] || continue
-        grep -qE "^${INTERNAL}$" <<<"$h" || return 0
+        [[ "$h" =~ $INTERNAL_RE ]] || return 0
         internal=1
-    done <<<"$(url_targets "$1")"
+    done
     [ "$internal" -eq 1 ] && return 1
     return 0
 }
@@ -253,13 +265,22 @@ outbound_target() {
 # The subject is a segment of $nq, NOT the lowercased $n: case is load-bearing
 # here, because curl's -F (form POST) and -f (fail silently) are different
 # flags and folding case would conflate them.
+# Bash's own ERE (no grep per test, AI_ST-126); `\b` is spelled as a non-word
+# character or end of input, which is what it meant here.
+WS_RE=(
+    ' -X ?(POST|PUT|PATCH|DELETE)([^A-Za-z0-9_]|$)'
+    ' --request[= ](POST|PUT|PATCH|DELETE)([^A-Za-z0-9_]|$)'
+    ' (-d|-F|-T)[ =]?[^ -]'
+    ' --(data|data-raw|data-binary|data-ascii|data-urlencode|json|form|form-string|upload-file)[= ]'
+    ' (-K|--config)[= ]?[^ -]'
+    ' --(post-data|post-file|method=(POST|PUT|PATCH|DELETE))'
+)
 write_shaped_http() {
-    has ' -X ?(POST|PUT|PATCH|DELETE)\b' "$1" \
-    || has ' --request[= ](POST|PUT|PATCH|DELETE)\b' "$1" \
-    || has ' (-d|-F|-T)[ =]?[^ -]' "$1" \
-    || has ' --(data|data-raw|data-binary|data-ascii|data-urlencode|json|form|form-string|upload-file)[= ]' "$1" \
-    || has ' (-K|--config)[= ]?[^ -]' "$1" \
-    || has ' --(post-data|post-file|method=(POST|PUT|PATCH|DELETE))' "$1"
+    local re
+    for re in "${WS_RE[@]}"; do
+        [[ "$1" =~ $re ]] && return 0
+    done
+    return 1
 }
 
 # raw_http_write -- true when some pipeline segment invokes curl or wget with a
@@ -314,6 +335,15 @@ write_shaped_http() {
 # awk, not a bash character loop: the loop took ~7s on a 60KB heredoc, and this
 # runs on every Bash call. awk prints UNBALANCED instead of segments when a
 # quote never closes.
+#
+# Latency (AI_ST-126). Everything that runs once per client segment is bash
+# builtins: write_shaped_http, url_targets, outbound_target and resolve_vars
+# spawn no process and open no $(…) subshell, and a variable's resolution is
+# cached per name. Measured 2026-10-02 on an 844 KB `cat > f <<'EOF'` whose
+# body has ~1500 `curl -X POST` lines (tests/test-outbound-guard.sh, `perf`):
+#   URL literal in each line            c44f0e8  9.3 s  ->  0.6 s
+#   URL in "$API", assigned on line 1   c44f0e8 56-77 s ->  0.8-1.0 s
+# The runner fails any run over 5 s.
 # flat_segments -- the quote-blind split: every `|;&` and every line end that a
 # backslash does not continue. $nq folds newlines away, so it cannot be the
 # input (AI_ST-125): a var-URL call on one line and an internal echo on the
@@ -425,12 +455,14 @@ segments() {
 #     reaches the host test, and any assignment that is not a plain URL, or a
 #     `read`/`for`/`mapfile`/`+=`/`printf -v` that could set NAME, leaves the
 #     reference unresolved, which fails closed as before.
-resolve_vars() {
-    local seg=$1 name vals line
-    while IFS= read -r name; do
-        [ -n "$name" ] || continue
-        grep -qE "(^| )(for|read|mapfile|readarray|getopts|select|unset)( [^ ]+)* ${name}( |$)|(^| )${name}\+=|-v ${name}( |$)" <<<"$segs" && continue
-        vals=""
+# What NAME resolves to is a property of the whole command, so it is worked out
+# once per name and cached (AI_ST-126): resolving it per client segment grepped
+# the full segment list each time, and an 844 KB heredoc of `"$PROM/..."` lines
+# took 56 s, most of the hook timeout. An empty value means unresolved.
+declare -A VAR_VALS=()
+var_values() {
+    local name=$1 vals="" line
+    if ! grep -qE "(^| )(for|read|mapfile|readarray|getopts|select|unset)( [^ ]+)* ${name}( |$)|(^| )${name}\+=|-v ${name}( |$)" <<<"$segs"; then
         while IFS= read -r line; do
             [ -n "$line" ] || continue
             if [[ "$line" =~ ^\ ?((export|local|declare|readonly)\ )?${name}=(https?://[^\ ]+)\ ?$ ]]; then
@@ -439,12 +471,29 @@ resolve_vars() {
                 vals=""; break
             fi
         done <<<"$(grep -E "(^| )${name}=" <<<"$segs")"
-        [ -n "$vals" ] && [[ "$vals" != *'$'* ]] || continue
+        [[ "$vals" == *'$'* ]] && vals=""
+    fi
+    VAR_VALS[$name]=$vals
+}
+
+# Sets RESOLVED rather than printing it, so the caller needs no $(…) subshell
+# and the VAR_VALS cache survives between segments.
+resolve_vars() {
+    local seg=$1 rest=$1 name vals
+    local -A seen=()
+    while [[ "$rest" =~ \$\{?([A-Za-z_][A-Za-z0-9_]*) ]]; do
+        rest=${rest#*"${BASH_REMATCH[0]}"}
+        name=${BASH_REMATCH[1]}
+        [ -n "${seen[$name]+x}" ] && continue
+        seen[$name]=1
+        [ -n "${VAR_VALS[$name]+x}" ] || var_values "$name"
+        vals=${VAR_VALS[$name]}
+        [ -n "$vals" ] || continue
         while [[ "$seg" =~ ^(.*)\$(\{${name}\}|${name})([^A-Za-z0-9_].*)?$ ]]; do
             seg="${BASH_REMATCH[1]}$vals${BASH_REMATCH[3]}"
         done
-    done <<<"$(grep -oE '\$\{?[A-Za-z_][A-Za-z0-9_]*' <<<"$seg" | tr -d '${' | sort -u)"
-    printf '%s' "$seg"
+    done
+    RESOLVED=$seg
 }
 
 raw_http_write() {
@@ -458,8 +507,8 @@ raw_http_write() {
         write_shaped_http "$seg" || continue
         # Prefix assignments are not targets (see resolve_vars).
         while [[ "$seg" =~ ^\ ?[A-Za-z_][A-Za-z0-9_]*=[^\ ]*\ (.*)$ ]]; do seg=${BASH_REMATCH[1]}; done
-        [[ "$seg" == *'$'* ]] && seg=$(resolve_vars "$seg")
-        outbound_target "$(tr '[:upper:]' '[:lower:]' <<<"$seg")" && return 0
+        [[ "$seg" == *'$'* ]] && { resolve_vars "$seg"; seg=$RESOLVED; }
+        outbound_target "${seg,,}" && return 0
     done <<<"$(grep -E "${B}(curl|wget)\b" <<<"$segs")"
     return 1
 }

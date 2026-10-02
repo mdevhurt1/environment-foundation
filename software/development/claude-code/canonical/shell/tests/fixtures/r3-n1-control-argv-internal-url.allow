@@ -1,0 +1,4 @@
+python3 - http://plane.homelab/api <<'EOF'
+import sys, requests
+requests.post(sys.argv[1], data='x')
+EOF

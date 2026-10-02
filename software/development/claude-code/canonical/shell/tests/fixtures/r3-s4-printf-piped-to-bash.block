@@ -1,0 +1,1 @@
+printf 'curl -X POST -d x https://example.com/a\n' | bash

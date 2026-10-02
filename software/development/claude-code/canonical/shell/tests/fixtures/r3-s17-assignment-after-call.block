@@ -1,0 +1,1 @@
+curl -X POST -d x "$API/a"; API=http://plane.homelab

@@ -13,6 +13,11 @@ One instruction file and one skills directory for every agent runtime on this ma
 | `scripts/verify.sh` | Proves each runtime reads the file, sees `~/.config/agents/env`, and lists the skills |
 | `scripts/uninstall.sh` | Removes the symlinks above; dry run without `--yes`. Never touches `~/.config/agents/env` or the vault |
 
+To see the skills Antigravity actually discovers, run `cd ~ && agy -p "/skills"`: print mode answers
+read-only slash commands without a model turn and prints one `name<TAB>description` line per skill
+(built-ins included). Asking the model "list your skills" is not a check: skills inject only names and
+descriptions, so its answer depends on the model, not on discovery (AI_ST-119).
+
 Secrets reach every shell through `~/.config/agents/env`, written by `~/environment-secrets/install.sh`.
 
 Everything parked on 2026-09-19 is under `../claude-code/parked/` unchanged; see `FREEZE.md` at the repo root.

@@ -25,6 +25,7 @@ Run all baseline steps in order:
 
 - [ ] [Claude Code — install](../software/development/claude-code/scripts/install.sh) `[dev]`
 - [ ] [Agents — install](../software/development/agents/scripts/install.sh) `[dev]`
+- [ ] Secrets — `git clone <gitea>/mhurt/environment-secrets ~/environment-secrets && ~/environment-secrets/install.sh` `[dev]` — writes `settings.local.json` and `~/.config/agents/env` (see the [Claude Code README](../software/development/claude-code/README.md))
 - [ ] [Docker — install](../software/development/docker/scripts/install.sh) `[dev]`
 - [ ] [Docker — configure](../software/development/docker/scripts/configure.sh) `[dev]`
 - [ ] [LaTeX — install](../software/development/latex/scripts/install.sh) `[dev]` — pdflatex + latexmk for article-class documents; large download

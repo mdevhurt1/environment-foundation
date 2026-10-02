@@ -26,7 +26,8 @@ possible and narrate one line per step, so the ritual stays cheap.
 ```bash
 pwd
 git rev-parse --show-toplevel 2>/dev/null || echo "(not in a repo)"
-for f in AGENTS.md CLAUDE.md; do test -f "$f" && echo "found per-project $f"; done
+top=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+for f in AGENTS.md CLAUDE.md; do test -f "$top/$f" && echo "found per-project $top/$f"; done
 ```
 
 A per-project instruction file adds to the global AGENTS.md; read it if

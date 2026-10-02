@@ -36,6 +36,9 @@ envkeys=1
 for k in GITEA_API_KEY GITEA_TOKEN N8N_API_KEY PLANE_API_KEY; do grep -q "^export $k=" "$HOME/.config/agents/env" 2>/dev/null || envkeys=0; done
 if [ "$(stat -c '%a' "$HOME/.config/agents/env" 2>/dev/null)" = "600" ] && [ "$envkeys" -eq 1 ]; then
     echo "PASS env file (600; GITEA_API_KEY GITEA_TOKEN N8N_API_KEY PLANE_API_KEY exported)"; pass=$((pass+1)); else echo "FAIL env file"; fail=$((fail+1)); fi
+# The outbound guard's internal allowlist lives in the env file, not the public repo (AI_ST-133); without it every Plane write is refused
+if grep -qE "^export AGENTS_INTERNAL_HOSTS='?[^' ]" "$HOME/.config/agents/env" 2>/dev/null; then echo "PASS guard allowlist (AGENTS_INTERNAL_HOSTS set in env file)"; pass=$((pass+1))
+else echo "FAIL guard allowlist: AGENTS_INTERNAL_HOSTS missing or empty in ~/.config/agents/env, so the guard allows loopback only (fix: add it to environment-secrets claude-code/settings.local.json.enc .env, re-run its install.sh)"; fail=$((fail+1)); fi
 # The reply must be a computed value, so an echoed command cannot match: a length, matched as LEN= followed by a nonzero digit.
 envq='Run this shell command and reply with only its output: echo "PLANE_API_KEY_LEN=${#PLANE_API_KEY} GITEA_API_KEY_LEN=${#GITEA_API_KEY}"'
 envok() { printf '%s' "$1" | grep -qE 'PLANE_API_KEY_LEN=[1-9][0-9]* GITEA_API_KEY_LEN=[1-9]'; }

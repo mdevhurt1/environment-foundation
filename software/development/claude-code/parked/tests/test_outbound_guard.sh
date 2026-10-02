@@ -304,10 +304,10 @@ assert_allowed "curl POST to internal Gitea" 'curl -X POST -d @b.json http://git
 # guard treats the whole /24 identically, so the endpoints exercise exactly the
 # allowlist branch these assertions are for, and the public artifact carries no
 # internal host address.
-assert_allowed "curl POST to a LAN address"  'curl -X POST -d x http://192.168.1.0:8080/api/thing'
+assert_allowed "curl POST to a LAN address"  'curl -X POST -d x http://192.0.2.0:8080/api/thing'
 assert_allowed "curl POST to loopback"       'curl -X POST -d x http://127.0.0.1:8080/api/thing'
 assert_allowed "curl POST to localhost"      'curl -X POST -d x http://localhost:3000/api/thing'
-assert_allowed "curl upload to a LAN address" 'curl -T report.md http://192.168.1.255/uploads/'
+assert_allowed "curl upload to a LAN address" 'curl -T report.md http://192.0.2.255/uploads/'
 
 # Read-shaped calls to external hosts stay allowed — the gate is about writing,
 # not about reaching the network. Fetching a page is not posting.

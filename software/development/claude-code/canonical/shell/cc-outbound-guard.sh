@@ -335,8 +335,8 @@ write_shaped_http() {
 #   - the no-jq path, where $cmd is raw JSON and its quotes are JSON's;
 #   - unbalanced quotes;
 #   - `$'…'` ANSI-C quoting, where `\'` does not close the quote.
-# A command with no quote characters keeps the old split too: nothing in it can
-# swallow a separator.
+# Quote-free commands still use the masking scanner: an unquoted -d value can
+# name an internal URL while the request target stays unresolved.
 #
 # Newlines (AI_ST-125). An unquoted line end separates commands exactly as `;`
 # does, so a var-URL call on one line no longer borrows an internal host from
@@ -405,7 +405,7 @@ segments() {
     local out sanitized
     sanitized=$(mask_data_heredocs)
     local cmd=$sanitized
-    if [ "$cmd" = "$payload" ] || [[ "$cmd" == *"\$'"* ]] || [[ "$cmd" != *[\"\']* ]]; then
+    if [ "$cmd" = "$payload" ] || [[ "$cmd" == *"\$'"* ]]; then
         flat_segments; return
     fi
     out=$(printf '%s\n' "$cmd" | LC_ALL=C awk -v sq="'" '

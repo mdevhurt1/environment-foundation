@@ -12,6 +12,7 @@ One instruction file and one skills directory for every agent runtime on this ma
 | `scripts/install.sh` | Creates the symlinks above and the six `~/.claude` links (it is their one owner; `claude-code/scripts/uninstall.sh` never touches them); seeds `~/.claude/settings.json` from `claude-code/canonical/settings.json` only when absent; an existing one is kept by hand and never edited |
 | `scripts/verify.sh` | Proves each runtime reads the file, sees `~/.config/agents/env`, and lists the skills |
 | `scripts/uninstall.sh` | Removes the symlinks above; dry run without `--yes`. Never touches `~/.config/agents/env` or the vault |
+| `review/` | Operator-owned review rubric, four-seat panel protocol, and file-only prompt and tally tools (not installed); see `review/README.md` |
 
 Secrets reach every shell through `~/.config/agents/env`, written by `~/environment-secrets/install.sh`.
 

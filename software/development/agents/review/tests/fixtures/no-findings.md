@@ -1,0 +1,8 @@
+RUBRIC: 1.0.0
+REVIEWER: gpt-5
+VERDICT: PASS
+FINDINGS: 0
+
+CHECKED:
+- scripts/install.sh:12 is fine
+END REVIEW

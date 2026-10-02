@@ -701,7 +701,7 @@ elif has "${B}gh alias (set|delete)\b"; then
 
 # --- gh api: read or write, decided by flags that carry no verb -----------
 elif has "${B}gh api\b" && {
-        has ' (-x|--method) (post|put|patch|delete)\b' \
+        has ' (-x ?|--method[ =])(post|put|patch|delete)\b' \
         || has ' (--field|--raw-field|--input)\b' \
         || has ' -[fF] ?[^ -]' "$nq" \
         || { has 'graphql' && has 'mutation'; }

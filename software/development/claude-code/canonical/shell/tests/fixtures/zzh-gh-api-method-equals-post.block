@@ -1,0 +1,1 @@
+gh api --method=POST repos/owner/repo/issues

@@ -1,0 +1,1 @@
+python3 -c 'import os, requests; BASE="http://plane.homelab/x"; requests.post(os.environ["URL"])'

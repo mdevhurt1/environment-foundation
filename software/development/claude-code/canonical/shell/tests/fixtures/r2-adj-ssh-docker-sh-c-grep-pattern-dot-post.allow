@@ -1,0 +1,1 @@
+ssh host.homelab 'docker exec app sh -c "cd /app; grep -n \"@router.post(\\\"/key/delete\" endpoints.py"'

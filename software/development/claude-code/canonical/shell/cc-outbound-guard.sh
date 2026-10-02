@@ -487,7 +487,7 @@ segments() {
 # later runs the output path. A syntax check (bash -n, py_compile) is not a run.
 executed_written_sources() {
     [[ "$cmd" == *cat*'<<'* || "$cmd" == *printf*'>'* ]] || return 0
-    printf '%s\n' "$cmd" | LC_ALL=C awk '
+    printf '%s\n' "$cmd" | LC_ALL=C awk -v join="${1-}" '
         function escape_re(s,    i,c,out) {
             out = ""
             for (i = 1; i <= length(s); i++) {
@@ -535,7 +535,10 @@ executed_written_sources() {
                 if (j > NR) continue
                 tail = ""
                 for (k = j + 1; k <= NR; k++) tail = tail lines[k] "\n"
-                if (runs(path,tail)) printf "%s", body
+                if (runs(path,tail)) {
+                    if (join) { gsub(/\n/, " ", body); print body }
+                    else printf "%s", body
+                }
                 i = j
             }
         }
@@ -731,18 +734,12 @@ scripted_write_shape() {
       || has '\burlopen\([^)]*\bdata=' "$1"
 }
 scripted_call_target() {
-    local rest=$1 arg match second found=0 unresolved=0
-    # An outbound URL anywhere in this executed script keeps the write gated,
-    # even when another call in the same script names an internal host.
-    url_targets "${SCRIPT_SOURCE:-$1}"
-    for arg in "${TARGETS[@]}"; do
-        [[ "$arg" =~ $INTERNAL_RE ]] || return 0
-    done
+    local rest=$1 arg match second found=0 unresolved=0 unresolved_args=""
     local call_re='(\.|->)(post|put|patch|delete)\(([^,)]*)'
     while [[ "$rest" =~ $call_re ]]; do
         arg=${BASH_REMATCH[3]}; rest=${rest#*"${BASH_REMATCH[0]}"}; found=1
         url_targets "$arg"
-        if [ "${#TARGETS[@]}" -eq 0 ]; then unresolved=1
+        if [ "${#TARGETS[@]}" -eq 0 ]; then unresolved=1; unresolved_args+=" $arg"
         elif outbound_target "$arg"; then return 0; fi
     done
     if [[ "$1" == *fetch\(* ]] && has '\bmethod ?[:=] ?\\?(post|put|patch|delete)\b' "$1"; then
@@ -751,7 +748,7 @@ scripted_call_target() {
         while [[ "$rest" =~ $fetch_re ]]; do
             arg=${BASH_REMATCH[1]}; rest=${rest#*"${BASH_REMATCH[0]}"}; found=1
             url_targets "$arg"
-            if [ "${#TARGETS[@]}" -eq 0 ]; then unresolved=1
+            if [ "${#TARGETS[@]}" -eq 0 ]; then unresolved=1; unresolved_args+=" $arg"
             elif outbound_target "$arg"; then return 0; fi
         done
     fi
@@ -761,7 +758,7 @@ scripted_call_target() {
         while [[ "$rest" =~ $urlopen_re ]]; do
             arg=${BASH_REMATCH[1]}; rest=${rest#*"${BASH_REMATCH[0]}"}; found=1
             url_targets "$arg"
-            if [ "${#TARGETS[@]}" -eq 0 ]; then unresolved=1
+            if [ "${#TARGETS[@]}" -eq 0 ]; then unresolved=1; unresolved_args+=" $arg"
             elif outbound_target "$arg"; then return 0; fi
         done
     fi
@@ -773,16 +770,36 @@ scripted_call_target() {
             if [[ "$arg" =~ ^\\?(post|put|patch|delete)$ ]]; then arg=$second; fi
             rest=${rest#*"$match"}; found=1
             url_targets "$arg"
-            if [ "${#TARGETS[@]}" -eq 0 ]; then unresolved=1
+            if [ "${#TARGETS[@]}" -eq 0 ]; then unresolved=1; unresolved_args+=" $arg"
             elif outbound_target "$arg"; then return 0; fi
         done
     fi
     if [ "$unresolved" -eq 1 ]; then
-        # A helper may pass a variable or Request object while its literal
-        # base URL is visible elsewhere in this same executed script.
-        local urls="" line val scan
+        # An environment lookup has no source-local value to resolve.
+        [[ "$unresolved_args" =~ (environ\[|process\.env\.) ]] && return 0
+        # Resolve only URLs tied to an argument of this call (or to a helper
+        # parameter used by it). An unrelated assignment cannot rescue it.
+        local urls="" line val scan name related_args=$unresolved_args helper calls params token helper_call_re
+        local definition_re='def[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)\(([^)]*)\)'
+        if [[ "${SCRIPT_SOURCE,,}" =~ $definition_re ]]; then
+            helper=${BASH_REMATCH[1]}
+            params=${BASH_REMATCH[2],,}
+            for token in ${params//,/ }; do
+                token=${token%%=*}
+                if [[ "$unresolved_args" =~ (^|[^[:alnum:]_])${token}([^[:alnum:]_]|$) ]]; then
+                    calls=$SCRIPT_SOURCE
+                    helper_call_re="(^|[^[:alnum:]_])${helper}\\(([^)]*)\\)"
+                    while [[ "$calls" =~ $helper_call_re ]]; do
+                        related_args+=" ${BASH_REMATCH[2]}"
+                        calls=${calls#*"${BASH_REMATCH[0]}"}
+                    done
+                    break
+                fi
+            done
+        fi
+        [[ "$related_args" =~ (environ\[|process\.env\.) ]] && return 0
         local assignment_re='(^|[[:space:];])([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=[[:space:]]*f?[^[:alnum:]]?(https?://[^[:space:]),]+)'
-        local request_re='[Rr]equest\(f?[^[:alnum:]]?(https?://[^[:space:]),]+)'
+        local request_re='(^|[[:space:];])([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=[[:space:]]*[^=;]*[Rr]equest\(f?[^[:alnum:]]?(https?://[^[:space:]),]+)'
         while IFS= read -r line; do
             scan=$line
             while [[ "$scan" =~ $assignment_re ]]; do
@@ -791,6 +808,8 @@ scripted_call_target() {
                     data|body|json|headers|note) scan=${scan#*"$match"}; continue;;
                 esac
                 val=${BASH_REMATCH[3]}
+                name=${BASH_REMATCH[2],,}
+                [[ "${related_args,,}" =~ (^|[^[:alnum:]_])${name}([^[:alnum:]_]|$) ]] || { scan=${scan#*"$match"}; continue; }
                 val=${val//\"/}; val=${val//\'/}
                 urls="$urls $val"
                 scan=${scan#*"$match"}
@@ -798,7 +817,8 @@ scripted_call_target() {
             scan=$line
             while [[ "$scan" =~ $request_re ]]; do
                 match=${BASH_REMATCH[0]}
-                val=${BASH_REMATCH[1]}
+                name=${BASH_REMATCH[2],,}; val=${BASH_REMATCH[3]}
+                [[ "$unresolved_args" =~ (^|[^[:alnum:]_])${name}([^[:alnum:]_]|$) ]] || { scan=${scan#*"$match"}; continue; }
                 val=${val//\"/}; val=${val//\'/}
                 urls="$urls $val"
                 scan=${scan#*"$match"}
@@ -817,11 +837,19 @@ scripted_call_target() {
     return 0
 }
 script_sources() {
-    local seg
-    # -c/-e arguments belong to the command that carries them. The quoted
-    # argument remains one segment even when it contains semicolons.
+    local seg previous=""
+    local inline_re='(^|[[:space:];&|(`=,:])([^[:space:]]*/)?(python[0-9.]*|node|bun|deno|perl|ruby|php|sh|bash|zsh)[[:space:]]+(-[cepEr]|--eval|--print)[[:space:]]'
+    # Inline code belongs to its interpreter; a grep -E pattern is data. The
+    # quoted argument remains one segment even when it contains semicolons.
     while IFS= read -r seg; do
-        [[ "$seg" =~ [[:space:]]-[ce][[:space:]] ]] && printf '%s\n' "$seg"
+        if [[ "$seg" =~ $inline_re ]]; then
+            printf '%s\n' "$seg"
+        elif [[ "$seg" =~ (^|[[:space:]])(python[0-9.]*|node|bun|deno|perl|ruby|php)([[:space:]]|$) ]] \
+             && [[ "$cmd" =~ \|[[:space:]]*(python[0-9.]*|node|bun|deno|perl|ruby|php)([[:space:]]|$) ]] \
+             && scripted_write_shape "${previous,,}"; then
+            printf '%s\n' "$previous"
+        fi
+        previous=$seg
     done <<<"$(segments)"
     # A heredoc body belongs to its consuming command, not to each body line.
     # Data sinks such as cat > file and git commit -F - do not execute it.
@@ -844,22 +872,29 @@ script_sources() {
             }
         }
     ' | tr -d '"'"'"
-    executed_written_sources | tr -d '"'"'"
+    executed_written_sources joined | tr -d '"'"'"
 }
 scripted_http_write() {
     local seg lower segs fragment filtered
+    # A fragment whose command word is a search tool carries a pattern, which
+    # is data. The word must START the fragment (after an optional ssh host or
+    # sh -c wrapper and its quote), so a payload that merely says `grep` stays
+    # code (review r2 N4), while a quoted remote `sh -c "cd d; grep …"` still
+    # drops its pattern (r2 ADJ-2). `sed = x.post(…)` is an assignment, not a
+    # search.
+    local search_re='^[[:space:]]*(ssh[[:space:]]+[^[:space:]]+[[:space:]]+)?((sh|bash|zsh)[[:space:]]+-c[[:space:]]+)?["'\'']?(grep|rg|sed)[[:space:]]+[^=[:space:]]'
     scripted_write_shape "$n" || return 1
     segs=$(segments)
     while IFS= read -r seg; do
         lower=${seg,,}
         # A search pattern is data. Shell code after its semicolon still runs.
-        if [[ "$lower" =~ (^|[[:space:]])(grep|rg|sed)[[:space:]] ]]; then
+        if [[ "$lower" =~ (^|[^[:alnum:]_])(grep|rg|sed)[[:space:]] ]]; then
             filtered=""
             while [[ "$lower" == *';'* ]]; do
                 fragment=${lower%%;*}; lower=${lower#*;}
-                [[ "$fragment" =~ (^|[[:space:]])(grep|rg|sed)[[:space:]] ]] || filtered+=" $fragment"
+                [[ "$fragment" =~ $search_re ]] || filtered+=" $fragment"
             done
-            [[ "$lower" =~ (^|[[:space:]])(grep|rg|sed)[[:space:]] ]] || filtered+=" $lower"
+            [[ "$lower" =~ $search_re ]] || filtered+=" $lower"
             seg=$filtered; lower=$filtered
         fi
         scripted_write_shape "$lower" || continue

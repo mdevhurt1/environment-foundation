@@ -1,0 +1,1 @@
+ssh host.homelab 'sh -c "grep -n x f; python3 -c \"import requests; requests.post(\\\"https://example.org/x\\\")\""'

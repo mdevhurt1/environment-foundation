@@ -1,0 +1,2 @@
+curl -s -X POST -d '{"a":1}' "$URL"
+echo "see http://plane.homelab/x"

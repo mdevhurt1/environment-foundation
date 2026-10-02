@@ -1,0 +1,3 @@
+curl -s -X POST -d x http://plane.homelab/a
+curl -s -X POST -d y http://192.0.2.5/b
+echo done

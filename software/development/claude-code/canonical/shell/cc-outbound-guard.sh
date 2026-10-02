@@ -303,14 +303,35 @@ write_shaped_http() {
 # A command with no quote characters keeps the old split too: nothing in it can
 # swallow a separator.
 #
+# Newlines (AI_ST-125). An unquoted line end separates commands exactly as `;`
+# does, so a var-URL call on one line no longer borrows an internal host from
+# an echo on the next; a backslash-continued line still joins. A heredoc body
+# is no longer part of the command it feeds: each body line becomes its own
+# segment. That stops a body naming an internal URL from rescuing a `-d @-
+# "$URL"` call, while a `bash <<EOF` body that runs curl is still scanned, line
+# by line, as the code it is.
+#
 # awk, not a bash character loop: the loop took ~7s on a 60KB heredoc, and this
-# runs on every Bash call. Newlines fold to spaces as in $nq (continuations
-# included); a heredoc body stays in its command's segment, as it always has.
-# awk prints UNBALANCED instead of segments when a quote never closes.
+# runs on every Bash call. awk prints UNBALANCED instead of segments when a
+# quote never closes.
+# flat_segments -- the quote-blind split: every `|;&` and every line end that a
+# backslash does not continue. $nq folds newlines away, so it cannot be the
+# input (AI_ST-125): a var-URL call on one line and an internal echo on the
+# next would merge into one segment. On the no-jq path $cmd is raw JSON, whose
+# line ends are the two characters `\n` (and a continuation is `\\\n`).
+flat_segments() {
+    local s=$cmd
+    if [ "$cmd" = "$payload" ]; then
+        s=$(sed -e 's/\\\\\\n/ /g' -e 's/\\n/\n/g' <<<"$s")
+    fi
+    sed -e ':a' -e '/\\$/{N;s/\\\n/ /;ba' -e '}' <<<"$s" \
+        | tr -d '"'"'" | tr '\t' ' ' | sed -e 's/\\ / /g' -e 's/  */ /g' | tr '|;&' '\n'
+}
+
 segments() {
     local out
     if [ "$cmd" = "$payload" ] || [[ "$cmd" == *"\$'"* ]] || [[ "$cmd" != *[\"\']* ]]; then
-        tr '|;&' '\n' <<<"$nq"; return
+        flat_segments; return
     fi
     out=$(printf '%s\n' "$cmd" | LC_ALL=C awk -v sq="'" '
         function endword(   raw, bare) {
@@ -337,15 +358,19 @@ segments() {
                     if (c != "\n") { o = o (sep(c) ? "\n" : c); continue }
                     cm = 0
                 }
-                if (q == "" && c == "\n") {            # end of a shell line
-                    endword(); mask = 0; client = ""; o = o " "
+                if (q == "" && c == "\n") {            # end of a shell line: a separator
+                    endword(); mask = 0; client = ""; o = o "\n"
                     for (k = 1; k <= nh; k++) {          # heredoc bodies: data up to the terminator
                         while (i < n) {
                             j = index(substr(s, i + 1), "\n"); if (j == 0) j = n - i
                             line = substr(s, i + 1, j - 1); i = i + j
                             t = line; if (hd[k]) sub(/^\t+/, "", t)
-                            if (t == ht[k]) { o = o line " "; break }
-                            gsub(/[|;&]/, "\n", line); o = o line " "
+                            if (t == ht[k]) { o = o "\n"; break }
+                            gsub(/[|;&]/, "\n", line)
+                            # Each body line is its own segment, never part of the
+                            # command it feeds; a trailing backslash joins the next
+                            # line, so `bash <<EOF` bodies keep continued curl calls.
+                            if (sub(/\\$/, "", line)) o = o line " "; else o = o line "\n"
                         }
                     }
                     nh = 0; continue
@@ -377,22 +402,65 @@ segments() {
             print o
         }')
     if [ "$out" = UNBALANCED ]; then
-        tr '|;&' '\n' <<<"$nq"; return
+        flat_segments; return
     fi
     # Normalise each segment exactly as $nq is built.
     printf '%s\n' "$out" | tr -d '"'"'" | tr '\t' ' ' | sed -e 's/\\ / /g' -e 's/  */ /g'
 }
 
+# resolve_vars <segment> -- the segment with each `$NAME` / `${NAME}` replaced
+# by every URL this same command assigns to NAME (AI_ST-125).
+#
+# Splitting on newlines made a common, legitimate script shape fail closed:
+#   PROM=http://prom.internal:9090
+#   curl --data-urlencode "query=up" "$PROM/api/v1/query"
+# It only ever passed because the two lines merged into one segment, which is
+# also exactly how a var-URL call borrowed an unrelated echo's internal host.
+# Resolving the variable keeps the first and refuses the second. Narrowly:
+#   - only a segment that is nothing but `[export|local|declare|readonly]
+#     NAME=scheme://...` counts as an assignment. A prefix assignment
+#     (`NAME=... curl "$NAME"`) does not: the shell expands $NAME before the
+#     prefix takes effect, so its URL is never the target;
+#   - EVERY assignment of NAME is substituted, so a later external value still
+#     reaches the host test, and any assignment that is not a plain URL, or a
+#     `read`/`for`/`mapfile`/`+=`/`printf -v` that could set NAME, leaves the
+#     reference unresolved, which fails closed as before.
+resolve_vars() {
+    local seg=$1 name vals line
+    while IFS= read -r name; do
+        [ -n "$name" ] || continue
+        grep -qE "(^| )(for|read|mapfile|readarray|getopts|select|unset)( [^ ]+)* ${name}( |$)|(^| )${name}\+=|-v ${name}( |$)" <<<"$segs" && continue
+        vals=""
+        while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            if [[ "$line" =~ ^\ ?((export|local|declare|readonly)\ )?${name}=(https?://[^\ ]+)\ ?$ ]]; then
+                vals="$vals ${BASH_REMATCH[3]}"
+            else
+                vals=""; break
+            fi
+        done <<<"$(grep -E "(^| )${name}=" <<<"$segs")"
+        [ -n "$vals" ] && [[ "$vals" != *'$'* ]] || continue
+        while [[ "$seg" =~ ^(.*)\$(\{${name}\}|${name})([^A-Za-z0-9_].*)?$ ]]; do
+            seg="${BASH_REMATCH[1]}$vals${BASH_REMATCH[3]}"
+        done
+    done <<<"$(grep -oE '\$\{?[A-Za-z_][A-Za-z0-9_]*' <<<"$seg" | tr -d '${' | sort -u)"
+    printf '%s' "$seg"
+}
+
 raw_http_write() {
-    local seg
+    local seg segs
     grep -qE "${B}(curl|wget)\b" <<<"$nq" || return 1
+    segs=$(segments)
     # One grep picks the client segments (the same test the loop used to run per
     # segment): a big heredoc splits into thousands, and a process each cost seconds.
     while IFS= read -r seg; do
         [ -n "$seg" ] || continue
         write_shaped_http "$seg" || continue
+        # Prefix assignments are not targets (see resolve_vars).
+        while [[ "$seg" =~ ^\ ?[A-Za-z_][A-Za-z0-9_]*=[^\ ]*\ (.*)$ ]]; do seg=${BASH_REMATCH[1]}; done
+        [[ "$seg" == *'$'* ]] && seg=$(resolve_vars "$seg")
         outbound_target "$(tr '[:upper:]' '[:lower:]' <<<"$seg")" && return 0
-    done <<<"$(segments | grep -E "${B}(curl|wget)\b")"
+    done <<<"$(grep -E "${B}(curl|wget)\b" <<<"$segs")"
     return 1
 }
 

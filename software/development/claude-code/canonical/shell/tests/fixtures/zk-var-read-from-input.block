@@ -1,0 +1,3 @@
+URL=http://plane.homelab/x
+read -r URL < target.txt
+curl -s -X POST -d '{"text":"hi"}' "$URL"

@@ -33,9 +33,10 @@ it serves.
 
 ## The rules
 
-1. **Four seats, four distinct top-tier models.** Seat the four when the round is set
-   up, not once for all time. No model may hold two seats. `assemble_prompts.py`
-   refuses duplicates and any panel that is not exactly four seats.
+1. **Four seats, four distinct models, each qualifying under rule 2** (at or above the
+   producer's tier). Seat the four when the round is set up, not once for all time.
+   No model may hold two seats. `assemble_prompts.py` refuses duplicates and any panel
+   that is not exactly four seats.
 2. **No reviewer below the producer.** The producer is the model that wrote the
    artefact. If several models contributed, it is the most capable of them. Every
    reviewer's tier number must be less than or equal to the producer's (tier 1 is the

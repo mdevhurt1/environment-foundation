@@ -82,6 +82,7 @@ ends unless lingering is on (`loginctl enable-linger $USER`).
 ```bash
 bash scripts/verify.sh       # timer enabled+active, last run, fresh metric, live probe
 bash scripts/test.sh         # offline unit test with stubbed docker/nvidia-smi/curl
+bash scripts/test-apt-hook.sh   # offline run of the apt hook install block below, stubbed dpkg/docker
 ```
 
 `test.sh` replays the healthy case and every failure signature. Its positive
@@ -110,7 +111,8 @@ sudo tee /usr/local/sbin/restart-ollama-on-nvidia-change >/dev/null <<'SH'
 # Restart the ollama container when the installed nvidia driver packages change.
 stamp=/var/lib/ollama-nvidia-pkg.stamp
 now=$(dpkg-query -W -f='${Package} ${Version}\n' 'nvidia-driver-*' 'libnvidia-compute-*' 2>/dev/null | sort)
-# First run: record the installed versions; there is no change to act on yet.
+# No stamp yet: record the installed versions; there is no change to act on.
+# The install step below runs this once, so the first dpkg run already compares.
 [ -f "$stamp" ] || { printf '%s\n' "$now" > "$stamp"; exit 0; }
 [ "$now" = "$(cat "$stamp")" ] && exit 0
 if docker ps -q --filter name='^ollama$' | grep -q .; then
@@ -120,6 +122,7 @@ printf '%s\n' "$now" > "$stamp"
 exit 0
 SH
 sudo chmod 0755 /usr/local/sbin/restart-ollama-on-nvidia-change
+sudo /usr/local/sbin/restart-ollama-on-nvidia-change   # seed the stamp now, so the next driver upgrade is acted on
 echo 'DPkg::Post-Invoke { "/usr/local/sbin/restart-ollama-on-nvidia-change || true"; };' \
   | sudo tee /etc/apt/apt.conf.d/99-restart-ollama-on-nvidia-change
 ```

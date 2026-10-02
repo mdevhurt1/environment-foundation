@@ -72,7 +72,7 @@ env_file_ok() {
 }
 check "env file (600; GITEA_API_KEY GITEA_TOKEN N8N_API_KEY PLANE_API_KEY exported)" env_file_ok
 # The outbound guard's internal allowlist lives in the env file, not the public repo (AI_ST-133); without it every Plane write is refused
-if grep -qE "^export AGENTS_INTERNAL_HOSTS='?[^' ]" "$HOME/.config/agents/env" 2>/dev/null; then pass_row "guard allowlist (AGENTS_INTERNAL_HOSTS set in env file)"
+if grep -qE "^export AGENTS_INTERNAL_HOSTS=['\"]?[^'\" ]" "$HOME/.config/agents/env" 2>/dev/null; then pass_row "guard allowlist (AGENTS_INTERNAL_HOSTS set in env file)"
 else fail_row "guard allowlist: AGENTS_INTERNAL_HOSTS missing or empty in ~/.config/agents/env, so the guard allows loopback only (fix: add it to environment-secrets claude-code/settings.local.json.enc .env, re-run its install.sh)"; fi
 if envok "$(cat "$tmp/env.txt" 2>/dev/null)"; then pass_row "env in runtime (codex)"; else fail_row "env in runtime (codex; check shell_environment_policy in ~/.codex/config.toml)"; fi
 # Informational: agy has no documented env-policy switch, so its tool shell does not carry the keys (AI_ST-120).

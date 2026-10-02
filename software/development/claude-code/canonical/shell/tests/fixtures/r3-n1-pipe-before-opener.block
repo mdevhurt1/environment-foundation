@@ -1,0 +1,4 @@
+curl -s http://plane.homelab/a | python3 - <<'EOF'
+import requests
+requests.post(target, data='x')
+EOF

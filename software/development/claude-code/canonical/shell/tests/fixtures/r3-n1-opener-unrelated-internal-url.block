@@ -1,0 +1,4 @@
+echo http://plane.homelab/ok; python3 - <<'EOF'
+import requests
+requests.post(target, data='x')
+EOF

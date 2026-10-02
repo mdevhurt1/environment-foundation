@@ -115,7 +115,7 @@ install, which this module did not create.
 
 ```bash
 sudo apt-get update && sudo apt-get upgrade      # apt install
-snap refresh code                                # snap install (automatic anyway)
+sudo snap refresh code                           # snap install (automatic anyway)
 ```
 
 Microsoft notes the apt repository can lag a new release by up to three hours.

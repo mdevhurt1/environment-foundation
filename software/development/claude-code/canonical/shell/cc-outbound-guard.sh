@@ -502,7 +502,10 @@ executed_written_sources() {
             direct = (path ~ /^\.\// ? p : "[.]\\/" p)
             prefix = "(nohup[[:space:]]+|timeout[[:space:]]+[^[:space:]]+[[:space:]]+|env[[:space:]]+([^[:space:]]+=[^[:space:]]+[[:space:]]+)*|uv[[:space:]]+run[[:space:]]+)*"
             runner = "(bash|sh|zsh|source|[.]|python[0-9.]*|node|bun|ruby|perl|php|deno)"
-            return tail ~ "(^|[[:space:];&|])" prefix "(" runner "[[:space:]]+" p "|" direct ")([[:space:];&|]|$)"
+            if (tail ~ "(^|[[:space:];&|])" prefix "(" runner "[[:space:]]+" p "|" direct ")([[:space:];&|]|$)") return 1
+            # An absolute or ~ path runs as a command word, not as an argument
+            # such as `chmod +x /tmp/x.sh` (review r3 S3).
+            return path ~ /^[\/~]/ && tail ~ "(^|[;&|(\n]|(then|do|else|exec|sudo)[[:space:]])[[:space:]]*" prefix p "([[:space:];&|)]|$)"
         }
         { lines[NR] = $0 }
         END {
@@ -583,6 +586,13 @@ var_values() {
             fi
         done <<<"$(grep -E "(^| )${name}=" <<<"$segs")"
         [[ "$vals" == *'$'* ]] && vals=""
+        # A use before the first assignment reads the inherited value (r3 S17).
+        if [ -n "$vals" ]; then
+            local first_use first_set
+            first_use=$(grep -m1 -nE "\\\$\\{?${name}([^A-Za-z0-9_]|$)" <<<"$segs")
+            first_set=$(grep -m1 -nE "(^| )${name}=" <<<"$segs")
+            [ -n "$first_use" ] && [ "${first_use%%:*}" -lt "${first_set%%:*}" ] && vals=""
+        fi
     fi
     VAR_VALS[$name]=$vals
 }
@@ -608,10 +618,13 @@ resolve_vars() {
 }
 
 config_stdin_text() {
-    local seg=$1 previous=$2 source_name
+    local seg=$1 previous=$2 source_name p
     local function_call_re='(^|[[:space:](])([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*$'
     CONFIG_TEXT=""
-    # A preceding printf/echo is visible only when it is piped to this curl.
+    # A preceding printf/echo is visible only when it is piped to this curl:
+    # the previous segment must end in a pipe, not in `;` (review r3 S18).
+    p=${previous# }; p=${p% }
+    [[ -n "$p" && ( "$nq" == *"$p |"* || "$nq" == *"$p|"* ) ]] || previous=""
     if [[ "$cmd" =~ \|[[:space:]]*curl[^[:cntrl:]]*(-K|--config)[=\ ]?- ]] \
        && [[ "$previous" =~ (^|[[:space:]])(printf|echo)[[:space:]] ]]; then
         CONFIG_TEXT=$previous; return 0
@@ -648,22 +661,29 @@ config_stdin_text() {
 }
 config_write_directive() {
     local config=${1//\\n/$'\n'}
-    grep -qiE '^[[:space:]]*(--)?(data(-raw|-binary|-ascii|-urlencode)?|json|form(-string)?|upload-file)([[:space:]]*[=:]|[[:space:]])|^[[:space:]]*(-d|-F|-T)([[:space:]]*[=:]|[[:space:]])|^[[:space:]]*(--)?(request|-X)([[:space:]]*[=:]|[[:space:]])[[:space:]]*[^[:alnum:]]?(POST|PUT|PATCH|DELETE)([^[:alpha:]]|$)' <<<"$config"
+    # `printf '%s\n' 'url = …' 'data = …'`: quote stripping joined the
+    # arguments onto one line, so a directive can start at any word (r3 S5).
+    local a='^[[:space:]]*'
+    [[ "$config" == *%* ]] && a='(^|[[:space:]])'
+    grep -qiE "$a"'(--)?(data(-raw|-binary|-ascii|-urlencode)?|json|form(-string)?|upload-file)([[:space:]]*[=:]|[[:space:]])|'"$a"'(-d|-F|-T)([[:space:]]*[=:]|[[:space:]])|'"$a"'(--)?(request|-X)([[:space:]]*[=:]|[[:space:]])[[:space:]]*[^[:alnum:]]?(POST|PUT|PATCH|DELETE)([^[:alpha:]]|$)' <<<"$config"
 }
 raw_http_write() {
-    local seg segs config_urls previous="" config_flag written
+    local seg segs config_urls previous="" config_flag written printf_runs=0
     local client_re=$CLIENT_RE
     grep -qE "${B}([^ ]*/)?(curl|wget)\b" <<<"$nq" || return 1
     segs=$(segments)
     written=$(executed_written_sources)
     [ -n "$written" ] && segs+=$'\n'"$(written_segments "$written")"
+    # printf output piped into a shell is code, not file content (review r3 S4).
+    local printf_shell_re='(^|[[:space:];&|(])printf[[:space:]].*\|[[:space:]]*(sudo[[:space:]]+)?([^[:space:]]*/)?(bash|sh|zsh|dash|ksh)([[:space:]]|$)'
+    [[ "$nq" =~ $printf_shell_re ]] && printf_runs=1
     # Keep client detection in Bash: a big heredoc splits into thousands of
     # segments, and spawning a process per segment costs seconds.
     while IFS= read -r seg; do
         [ -n "$seg" ] || continue
         # A printf argument is file content, even when it spells a curl call.
         # Its written body is inspected separately if the file is run below.
-        if [[ "$seg" =~ (^|[[:space:]])printf[[:space:]] ]]; then previous=$seg; continue; fi
+        if [ "$printf_runs" -eq 0 ] && [[ "$seg" =~ (^|[[:space:]])printf[[:space:]] ]]; then previous=$seg; continue; fi
         if ! [[ "$seg" =~ $client_re ]]; then previous=$seg; continue; fi
         if ! write_shaped_http "$seg"; then previous=$seg; continue; fi
         # A stdin config can name another URL besides one on the command line.
@@ -779,7 +799,7 @@ scripted_call_target() {
         [[ "$unresolved_args" =~ (environ\[|process\.env\.) ]] && return 0
         # Resolve only URLs tied to an argument of this call (or to a helper
         # parameter used by it). An unrelated assignment cannot rescue it.
-        local urls="" line val scan name related_args=$unresolved_args helper calls params token helper_call_re
+        local urls="" line val scan name related_args=$unresolved_args helper calls params token helper_call_re head
         local definition_re='def[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)\(([^)]*)\)'
         if [[ "${SCRIPT_SOURCE,,}" =~ $definition_re ]]; then
             helper=${BASH_REMATCH[1]}
@@ -825,7 +845,10 @@ scripted_call_target() {
             done
         done <<<"${SCRIPT_SOURCE:-$1}"
         if [[ "$SCRIPT_SOURCE" == *'<<'* ]]; then
-            url_targets "${SCRIPT_SOURCE%%<<*}"
+            # Only the interpreter's own arguments (`python3 - URL <<EOF`), not
+            # a URL in an earlier command on the opener line (review r3 N1).
+            head=${SCRIPT_SOURCE%%<<*}; head=${head##*[;&|]}
+            url_targets "$head"
             for val in "${TARGETS[@]}"; do urls="$urls http://$val"; done
         fi
         [ -n "$urls" ] && { outbound_target "$urls"; return $?; }
@@ -890,6 +913,8 @@ scripted_http_write() {
         # A search pattern is data. Shell code after its semicolon still runs.
         if [[ "$lower" =~ (^|[^[:alnum:]_])(grep|rg|sed)[[:space:]] ]]; then
             filtered=""
+            # A wrapper's `&&`, `||` and ` | ` end a fragment too (review r3 S8).
+            lower=${lower//&&/;}; lower=${lower//||/;}; lower=${lower// | /;}
             while [[ "$lower" == *';'* ]]; do
                 fragment=${lower%%;*}; lower=${lower#*;}
                 [[ "$fragment" =~ $search_re ]] || filtered+=" $fragment"

@@ -1,0 +1,4 @@
+cat > /tmp/x.sh <<'EOF'
+curl -X POST -d x https://example.com/a
+EOF
+chmod +x /tmp/x.sh && /tmp/x.sh

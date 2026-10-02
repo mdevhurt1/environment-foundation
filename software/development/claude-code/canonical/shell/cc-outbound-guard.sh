@@ -272,7 +272,7 @@ WS_RE=(
     ' --request[= ](POST|PUT|PATCH|DELETE)([^A-Za-z0-9_]|$)'
     ' (-d|-F|-T)[ =]?[^ -]'
     ' --(data|data-raw|data-binary|data-ascii|data-urlencode|json|form|form-string|upload-file)[= ]'
-    ' (-K|--config)[= ]?[^ -]'
+    ' (-K|--config)[= ]?(-|[^ -])'
     ' --(post-data|post-file|method=(POST|PUT|PATCH|DELETE))'
 )
 write_shaped_http() {
@@ -497,7 +497,7 @@ resolve_vars() {
 }
 
 raw_http_write() {
-    local seg segs
+    local seg segs config_urls
     grep -qE "${B}(curl|wget)\b" <<<"$nq" || return 1
     segs=$(segments)
     # One grep picks the client segments (the same test the loop used to run per
@@ -505,6 +505,13 @@ raw_http_write() {
     while IFS= read -r seg; do
         [ -n "$seg" ] || continue
         write_shaped_http "$seg" || continue
+        # A stdin config can name another URL besides one on the command line.
+        # Its url directives are data segments, so check them with this client.
+        # curl accepts `url = x`, `url: x`, `url x` and `--url x` in a config.
+        if [[ "$seg" =~ (^|[[:space:]])(-K|--config)[=\ ]?-($|[[:space:]]) ]]; then
+            config_urls=$(grep -iE '^[[:space:]]*(--)?url([[:space:]]*[=:]|[[:space:]])' <<<"$cmd")
+            if [ -n "$config_urls" ] && outbound_target "${config_urls,,}"; then return 0; fi
+        fi
         # Prefix assignments are not targets (see resolve_vars).
         while [[ "$seg" =~ ^\ ?[A-Za-z_][A-Za-z0-9_]*=[^\ ]*\ (.*)$ ]]; do seg=${BASH_REMATCH[1]}; done
         [[ "$seg" == *'$'* ]] && { resolve_vars "$seg"; seg=$RESOLVED; }

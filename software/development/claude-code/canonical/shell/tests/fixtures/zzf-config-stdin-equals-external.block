@@ -1,0 +1,4 @@
+curl --config=- <<'EOF'
+url = "https://example.org/api"
+request = "POST"
+EOF

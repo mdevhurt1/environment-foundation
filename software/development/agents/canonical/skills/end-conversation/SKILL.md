@@ -139,17 +139,22 @@ runtime keeps its own session log.
 If Step 1 or 1a added, renamed, re-described or removed any memory file:
 
 ```bash
+regen=~/.claude/cc-memory-index-regen.sh   # set here too: each block may run in a fresh shell
 if [ -f "$regen" ]; then bash "$regen" && bash "$regen" --check
-else echo "regen script not installed: hand-edit MEMORY.md, one line per memory"; fi
+else echo "regen script not installed: MEMORY.md left untouched"; fi
 ```
 
 The regenerator writes `MEMORY.md` under a lock, so concurrent sessions
 cannot clobber each other, and `--check` asserts the per-file invariant
 both ways (every memory file has exactly one line, every line has a file).
 New lines take their hook from the file's frontmatter `description:` —
-fixing a description IS fixing the index. Without the script, hand-insert
-`- [[<type>_<slug>]] — <hook>` and then verify per file, never by comparing
-counts. Never hand-write essays into `MEMORY.md`; every session reads it.
+fixing a description IS fixing the index. Without the script, do **not**
+edit `MEMORY.md`: a hand edit bypasses the lock. Name in the final report
+each memory file this session added, renamed or removed, and hand the
+operator the command that restores the regenerator
+(`bash ~/environment-foundation/software/development/agents/scripts/install.sh`)
+followed by the Step 5 block. Never hand-write essays into `MEMORY.md`;
+every session reads it.
 
 ## Step 6: Promotion candidates
 

@@ -1,0 +1,12 @@
+# Deployed by software/system/ollama-gpu-watch (environment-foundation).
+[Unit]
+Description=Run the Ollama GPU probe every 15 minutes
+
+[Timer]
+OnBootSec=5min
+OnCalendar=*:0/15
+RandomizedDelaySec=60
+Persistent=true
+
+[Install]
+WantedBy=timers.target

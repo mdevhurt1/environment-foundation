@@ -549,6 +549,130 @@ scripted_http_write() {
     outbound_target "$n"
 }
 
+# --- the sink test: file writes are data, not calls (AI_ST-109) ----------
+#
+# Ruled 2026-09-25 (day-plan-2026-09-25/outbound-guard-ruling.md): when EVERY
+# sink of a command is a file path, client text inside it is data and the guard
+# stands down. Writing a file that contains `curl` posts nothing; if the file is
+# run later, that run is its own Bash call and is gated then. Nine recorded
+# false blocks (harness-friction.md, 2026-09-14..29) were all this shape: a
+# heredoc creating a spec whose body cites URLs, the guard's own prescribed
+# outbound draft quoting the `gh repo create` it stages, a script authored with
+# `curl -K -` and its URL in a variable, and a `printf >>` of a friction line
+# quoting the call it describes. Each ended at the Write tool and prevented
+# nothing.
+#
+# It runs on the RAW $cmd: $nq has lost the quotes and line ends that say what
+# is code and what is data. It stands down only when it can show the whole
+# command is inert, and fails closed (gates as before) on anything else:
+#   - every simple command's first word is one of a short list that cannot
+#     reach the network: cat tee printf echo mkdir touch chmod cd true. Every
+#     other word, including bash/sh/python/ssh/sudo/env/xargs, `{`, `(`, `if`,
+#     `for`, a `$VAR` command and a prefix assignment (`X=1 cat`), gates. A
+#     plain assignment (`D=~/vault/...`) is allowed, except to PATH, IFS,
+#     BASH_ENV, ENV, LD_* and the like, which change what a later word runs;
+#   - so a pipe or heredoc into an interpreter, a `bash script.sh` after the
+#     write, and a real client anywhere on the line all keep the gate on: one
+#     network sink is enough;
+#   - command and process substitution (`$(`, a backtick, `<(`, `>(`) execute,
+#     so they gate: outside single quotes in code, and anywhere in the body of
+#     an UNQUOTED heredoc, which the shell expands. A quoted heredoc
+#     (`<<'EOF'`, `<<"EOF"`, `<<\EOF`) body is literal and is not inspected;
+#   - `$'…'` quoting, an unclosed quote, an unterminated heredoc, any mention
+#     of /dev/tcp or /dev/udp (a redirect there IS a network sink), and the
+#     no-jq path (raw JSON, quotes unknowable) all gate.
+# The gh/forge branches sit behind this test too: L15 (2026-09-22) was the gh
+# branch refusing a draft that quoted `gh repo create`, so the ruling's "those
+# branches never false-positived" was already out of date. A command made only
+# of the words above cannot run gh.
+#
+# Residual risk, accepted by the ruling: a staged file could be executed by
+# something this hook never sees (cron, systemd, a remote host).
+files_only_sinks() {
+    [ "$cmd" != "$payload" ] || return 1
+    [[ "$cmd" == *[Dd][Ee][Vv]/[Tt][Cc][Pp]* || "$cmd" == *[Dd][Ee][Vv]/[Uu][Dd][Pp]* ]] && return 1
+    [ "$(printf '%s\n' "$cmd" | LC_ALL=C awk -v sq="'" '
+        function endword(   bare) {
+            if (!inw) return
+            inw = 0; bare = w; w = ""
+            if (redir) { redir = 0; return }          # a redirect target is a path
+            if (ncw) return                           # an argument
+            # NAME=value, with no quote before the `=` (qw: where a quote first began)
+            # Not one that changes how later words run: PATH could resolve `cat`
+            # to anything.
+            if (match(bare, /^[A-Za-z_][A-Za-z0-9_]*=/) && (qw == 0 || qw > RLENGTH)) {
+                if (bare ~ /^(PATH|BASH_ENV|ENV|IFS|LD_[A-Z_]*|PROMPT_COMMAND|SHELLOPTS|BASHOPTS|BASH_[A-Z_]*|GLOBIGNORE)=/) bad = 1
+                assign = 1; return
+            }
+            if (assign) bad = 1                       # prefix assignment: gate
+            else if (bare !~ /^(cat|tee|printf|echo|mkdir|touch|chmod|cd|true)$/) bad = 1
+            ncw = 1
+        }
+        function newcmd() { endword(); ncw = 0; assign = 0; redir = 0 }
+        function addc(c) { if (!inw) { inw = 1; qw = 0 } ; w = w c }
+        { s = s $0 "\n" }
+        END {
+            n = length(s); q = ""; bad = 0; nh = 0
+            for (i = 1; i <= n && !bad; i++) {
+                c = substr(s, i, 1); c2 = substr(s, i, 2)
+                if (q == sq) { if (c == sq) q = ""; else w = w c; continue }
+                if (q == "\"") {
+                    if (c == "\\") { w = w substr(s, i + 1, 1); i++; continue }
+                    if (c2 == "$(" || c == "`") { bad = 1; break }
+                    if (c == "\"") q = ""; else w = w c
+                    continue
+                }
+                # unquoted shell code
+                if (c == "\\") {
+                    if (substr(s, i + 1, 1) == "\n") { i++; continue }
+                    addc(substr(s, i + 1, 1)); i++; continue
+                }
+                if (c2 == "$(" || c == "`" || c2 == "$" sq || c2 == "<(" || c2 == ">(" || c == "(" || c == ")") { bad = 1; break }
+                if (c == sq || c == "\"") { if (!inw) { inw = 1; qw = 0 } ; if (!qw) qw = length(w) + 1; q = c; continue }
+                if (c == "#" && !inw) { while (i < n && substr(s, i + 1, 1) != "\n") i++; continue }
+                if (c == "\n") {
+                    newcmd()
+                    for (k = 1; k <= nh; k++) {               # heredoc bodies: data
+                        found = 0
+                        while (i < n) {
+                            j = index(substr(s, i + 1), "\n"); if (j == 0) j = n - i
+                            line = substr(s, i + 1, j - 1); i = i + j
+                            t = line; if (hd[k]) sub(/^\t+/, "", t)
+                            if (t == ht[k]) { found = 1; break }
+                            if (!hq[k] && (index(line, "$(") || index(line, "`"))) { bad = 1; break }
+                        }
+                        if (!found) bad = 1
+                    }
+                    nh = 0; continue
+                }
+                if (c == ";" || c == "|" || c == "&") { newcmd(); continue }
+                if (c == " " || c == "\t") { endword(); continue }
+                if (c2 == "<<" && substr(s, i + 2, 1) != "<") {
+                    endword(); j = i + 2; dash = 0
+                    if (substr(s, j, 1) == "-") { dash = 1; j++ }
+                    while (substr(s, j, 1) ~ /[ \t]/) j++
+                    wd = ""
+                    while (j <= n && substr(s, j, 1) !~ /[ \t\n;|&<>()]/) { wd = wd substr(s, j, 1); j++ }
+                    quoted = (wd ~ /["\047\\]/); gsub(/["\047\\]/, "", wd)
+                    if (wd == "") { bad = 1; break }
+                    nh++; ht[nh] = wd; hd[nh] = dash; hq[nh] = quoted
+                    i = j - 1; continue
+                }
+                if (c == "<" || c == ">") {               # redirect: the next word is a target
+                    endword()
+                    while (substr(s, i + 1, 1) ~ /[<>&|]/) i++
+                    redir = 1; continue
+                }
+                addc(c)
+            }
+            if (q != "") bad = 1
+            if (!bad) { newcmd(); if (nh) bad = 1 }
+            print (bad ? "GATE" : "FILES")
+        }')" = FILES ]
+}
+
+files_only_sinks && exit 0
+
 # --- gh: the verbs that publish -----------------------------------------
 #
 # The allowed side of each pair is the one the daily loop runs constantly:

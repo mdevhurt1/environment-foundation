@@ -1,0 +1,6 @@
+D=~/vault/20-surface/company/tasks/AI_ST-99/outbound
+mkdir -p "$D"
+cat > "$D/repo.body.md" <<'EOF'
+    gh repo create mhurt/outbound-guard --public --source . --push
+EOF
+gh repo create mhurt/outbound-guard --public --source . --push

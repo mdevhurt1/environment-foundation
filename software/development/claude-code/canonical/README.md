@@ -29,7 +29,7 @@ non-secret, non-machine-specific Claude Code configuration.
 - `model-policy.json` — role->model policy (see the module README)
 - `statusline-command.sh` — statusline renderer (mode, cwd, context %)
 - `shell/cc-memory-inject.sh` — SessionStart hook: points the session at MEMORY.md (AI_ST-123)
-- `shell/cc-outbound-guard.sh` — PreToolUse hook: blocks outbound writes from Bash (AI_ST-110); internal hosts beyond loopback come from `AGENTS_INTERNAL_HOSTS` in `~/.config/agents/env` (AI_ST-133)
+- `shell/cc-outbound-guard.sh` — PreToolUse hook: blocks outbound writes from Bash (AI_ST-110); internal hosts beyond loopback come from `AGENTS_INTERNAL_HOSTS` in `~/.config/agents/env` (AI_ST-133); a command whose every sink is a file (a heredoc or printf into a path) stands down, since writing client text is not calling a client (sink test, AI_ST-109)
 - `shell/cc-memory-index-regen.sh` — rebuilds MEMORY.md from the memory files; `--check` asserts the invariant (AI_ST-116)
 - `shell/tests/` — guard fixtures and runner, including an 844 KB heredoc latency check that fails over 5 s (AI_ST-126: 56-77 s before, about 1 s after)
 - Skills, including `session-start` and `end-conversation`, live in `software/development/agents/canonical/skills/`, shared by all four runtimes

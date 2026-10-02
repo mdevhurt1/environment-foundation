@@ -1,0 +1,1 @@
+printf '%s\n' '{"query":"q"}' | tee ~/vault/20-surface/company/tasks/topic-rerank/q.json >(curl -sS -X POST -d @- https://api.example.org/v1/rerank)

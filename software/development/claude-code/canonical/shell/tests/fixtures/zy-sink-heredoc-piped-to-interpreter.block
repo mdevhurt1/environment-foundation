@@ -1,0 +1,3 @@
+cat <<'EOF' | bash
+curl -sS -K - -G --data-urlencode 'jql=x' -d x "$JIRA_URL/rest/api/3/search/jql"
+EOF

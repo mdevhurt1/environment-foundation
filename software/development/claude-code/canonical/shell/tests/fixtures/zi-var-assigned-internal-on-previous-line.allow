@@ -1,0 +1,4 @@
+PROM=http://192.0.2.4:9090
+BASE="http://plane.homelab/api/v1/workspaces/homelab"
+curl -s -m 10 --data-urlencode "query=up" $PROM/api/v1/query | head
+curl -s -X POST -d '{"name":"a"}' "${BASE}/projects/p/issues/"

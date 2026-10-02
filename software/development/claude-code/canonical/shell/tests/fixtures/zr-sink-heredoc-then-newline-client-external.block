@@ -1,0 +1,6 @@
+cat > ~/vault/20-surface/company/tasks/topic-rerank/spec.md <<'EOF'
+# Topic rerank spec
+- Baseline repo: https://github.com/castorini/pyserini
+    curl -X POST https://api.example.org/v1/rerank -d '{"query":"q"}'
+EOF
+curl -X POST https://api.example.org/v1/rerank -d '{"query":"q"}'

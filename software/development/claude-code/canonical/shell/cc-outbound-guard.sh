@@ -183,6 +183,7 @@ while IFS= read -r e; do
     [ -n "$e" ] && INTERNAL="$INTERNAL|$(entry_regex "$e")"
 done <<<"$INTERNAL_ENTRIES"
 INTERNAL="($INTERNAL)"
+INTERNAL_RE="^${INTERNAL}\$"
 
 reason=""
 
@@ -211,8 +212,18 @@ reason=""
 # false BLOCK: a legitimate internal query URL (`http://plane.homelab/x?y=1`)
 # used to carry its query into the host token and miss the allowlist.
 url_targets() {
-    grep -oE 'https?://[^ /?#]+' <<<"$1" \
-        | sed -e 's|https\?://||' -e 's/^[^@]*@//' -e 's/:[0-9]*$//' -e 's/\.$//'
+    # Bash builtins into the global array TARGETS, not grep|sed and not a $(…)
+    # fork: this runs once per client segment, and a large heredoc yields
+    # thousands of those (AI_ST-126). Same extraction, same strips.
+    local rest=$1 h
+    TARGETS=()
+    while [[ "$rest" =~ https?://([^ /?#]+) ]]; do
+        rest=${rest#*"${BASH_REMATCH[0]}"}
+        h=${BASH_REMATCH[1]}
+        [[ "$h" == *@* ]] && h=${h#*@}
+        [[ "$h" =~ ^(.*):[0-9]*$ ]] && h=${BASH_REMATCH[1]}
+        TARGETS+=("${h%.}")
+    done
 }
 
 # outbound_target -- true when this request should be treated as leaving the
@@ -227,11 +238,12 @@ url_targets() {
 # message, a false allow costs a post that cannot be unpublished.
 outbound_target() {
     local h internal=0
-    while IFS= read -r h; do
+    url_targets "$1"
+    for h in "${TARGETS[@]}"; do
         [ -n "$h" ] || continue
-        grep -qE "^${INTERNAL}$" <<<"$h" || return 0
+        [[ "$h" =~ $INTERNAL_RE ]] || return 0
         internal=1
-    done <<<"$(url_targets "$1")"
+    done
     [ "$internal" -eq 1 ] && return 1
     return 0
 }
@@ -253,13 +265,22 @@ outbound_target() {
 # The subject is a segment of $nq, NOT the lowercased $n: case is load-bearing
 # here, because curl's -F (form POST) and -f (fail silently) are different
 # flags and folding case would conflate them.
+# Bash's own ERE (no grep per test, AI_ST-126); `\b` is spelled as a non-word
+# character or end of input, which is what it meant here.
+WS_RE=(
+    ' -X ?(POST|PUT|PATCH|DELETE)([^A-Za-z0-9_]|$)'
+    ' --request[= ](POST|PUT|PATCH|DELETE)([^A-Za-z0-9_]|$)'
+    ' (-d|-F|-T)[ =]?[^ -]'
+    ' --(data|data-raw|data-binary|data-ascii|data-urlencode|json|form|form-string|upload-file)[= ]'
+    ' (-K|--config)[= ]?[^ -]'
+    ' --(post-data|post-file|method=(POST|PUT|PATCH|DELETE))'
+)
 write_shaped_http() {
-    has ' -X ?(POST|PUT|PATCH|DELETE)\b' "$1" \
-    || has ' --request[= ](POST|PUT|PATCH|DELETE)\b' "$1" \
-    || has ' (-d|-F|-T)[ =]?[^ -]' "$1" \
-    || has ' --(data|data-raw|data-binary|data-ascii|data-urlencode|json|form|form-string|upload-file)[= ]' "$1" \
-    || has ' (-K|--config)[= ]?[^ -]' "$1" \
-    || has ' --(post-data|post-file|method=(POST|PUT|PATCH|DELETE))' "$1"
+    local re
+    for re in "${WS_RE[@]}"; do
+        [[ "$1" =~ $re ]] && return 0
+    done
+    return 1
 }
 
 # raw_http_write -- true when some pipeline segment invokes curl or wget with a
@@ -303,14 +324,44 @@ write_shaped_http() {
 # A command with no quote characters keeps the old split too: nothing in it can
 # swallow a separator.
 #
+# Newlines (AI_ST-125). An unquoted line end separates commands exactly as `;`
+# does, so a var-URL call on one line no longer borrows an internal host from
+# an echo on the next; a backslash-continued line still joins. A heredoc body
+# is no longer part of the command it feeds: each body line becomes its own
+# segment. That stops a body naming an internal URL from rescuing a `-d @-
+# "$URL"` call, while a `bash <<EOF` body that runs curl is still scanned, line
+# by line, as the code it is.
+#
 # awk, not a bash character loop: the loop took ~7s on a 60KB heredoc, and this
-# runs on every Bash call. Newlines fold to spaces as in $nq (continuations
-# included); a heredoc body stays in its command's segment, as it always has.
-# awk prints UNBALANCED instead of segments when a quote never closes.
+# runs on every Bash call. awk prints UNBALANCED instead of segments when a
+# quote never closes.
+#
+# Latency (AI_ST-126). Everything that runs once per client segment is bash
+# builtins: write_shaped_http, url_targets, outbound_target and resolve_vars
+# spawn no process and open no $(…) subshell, and a variable's resolution is
+# cached per name. Measured 2026-10-02 on an 844 KB `cat > f <<'EOF'` whose
+# body has ~1500 `curl -X POST` lines (tests/test-outbound-guard.sh, `perf`):
+#   URL literal in each line            c44f0e8  9.3 s  ->  0.6 s
+#   URL in "$API", assigned on line 1   c44f0e8 56-77 s ->  0.8-1.0 s
+# The runner fails any run over 5 s.
+# flat_segments -- the quote-blind split: every `|;&` and every line end that a
+# backslash does not continue. $nq folds newlines away, so it cannot be the
+# input (AI_ST-125): a var-URL call on one line and an internal echo on the
+# next would merge into one segment. On the no-jq path $cmd is raw JSON, whose
+# line ends are the two characters `\n` (and a continuation is `\\\n`).
+flat_segments() {
+    local s=$cmd
+    if [ "$cmd" = "$payload" ]; then
+        s=$(sed -e 's/\\\\\\n/ /g' -e 's/\\n/\n/g' <<<"$s")
+    fi
+    sed -e ':a' -e '/\\$/{N;s/\\\n/ /;ba' -e '}' <<<"$s" \
+        | tr -d '"'"'" | tr '\t' ' ' | sed -e 's/\\ / /g' -e 's/  */ /g' | tr '|;&' '\n'
+}
+
 segments() {
     local out
     if [ "$cmd" = "$payload" ] || [[ "$cmd" == *"\$'"* ]] || [[ "$cmd" != *[\"\']* ]]; then
-        tr '|;&' '\n' <<<"$nq"; return
+        flat_segments; return
     fi
     out=$(printf '%s\n' "$cmd" | LC_ALL=C awk -v sq="'" '
         function endword(   raw, bare) {
@@ -337,15 +388,19 @@ segments() {
                     if (c != "\n") { o = o (sep(c) ? "\n" : c); continue }
                     cm = 0
                 }
-                if (q == "" && c == "\n") {            # end of a shell line
-                    endword(); mask = 0; client = ""; o = o " "
+                if (q == "" && c == "\n") {            # end of a shell line: a separator
+                    endword(); mask = 0; client = ""; o = o "\n"
                     for (k = 1; k <= nh; k++) {          # heredoc bodies: data up to the terminator
                         while (i < n) {
                             j = index(substr(s, i + 1), "\n"); if (j == 0) j = n - i
                             line = substr(s, i + 1, j - 1); i = i + j
                             t = line; if (hd[k]) sub(/^\t+/, "", t)
-                            if (t == ht[k]) { o = o line " "; break }
-                            gsub(/[|;&]/, "\n", line); o = o line " "
+                            if (t == ht[k]) { o = o "\n"; break }
+                            gsub(/[|;&]/, "\n", line)
+                            # Each body line is its own segment, never part of the
+                            # command it feeds; a trailing backslash joins the next
+                            # line, so `bash <<EOF` bodies keep continued curl calls.
+                            if (sub(/\\$/, "", line)) o = o line " "; else o = o line "\n"
                         }
                     }
                     nh = 0; continue
@@ -377,22 +432,84 @@ segments() {
             print o
         }')
     if [ "$out" = UNBALANCED ]; then
-        tr '|;&' '\n' <<<"$nq"; return
+        flat_segments; return
     fi
     # Normalise each segment exactly as $nq is built.
     printf '%s\n' "$out" | tr -d '"'"'" | tr '\t' ' ' | sed -e 's/\\ / /g' -e 's/  */ /g'
 }
 
+# resolve_vars <segment> -- the segment with each `$NAME` / `${NAME}` replaced
+# by every URL this same command assigns to NAME (AI_ST-125).
+#
+# Splitting on newlines made a common, legitimate script shape fail closed:
+#   PROM=http://prom.internal:9090
+#   curl --data-urlencode "query=up" "$PROM/api/v1/query"
+# It only ever passed because the two lines merged into one segment, which is
+# also exactly how a var-URL call borrowed an unrelated echo's internal host.
+# Resolving the variable keeps the first and refuses the second. Narrowly:
+#   - only a segment that is nothing but `[export|local|declare|readonly]
+#     NAME=scheme://...` counts as an assignment. A prefix assignment
+#     (`NAME=... curl "$NAME"`) does not: the shell expands $NAME before the
+#     prefix takes effect, so its URL is never the target;
+#   - EVERY assignment of NAME is substituted, so a later external value still
+#     reaches the host test, and any assignment that is not a plain URL, or a
+#     `read`/`for`/`mapfile`/`+=`/`printf -v` that could set NAME, leaves the
+#     reference unresolved, which fails closed as before.
+# What NAME resolves to is a property of the whole command, so it is worked out
+# once per name and cached (AI_ST-126): resolving it per client segment grepped
+# the full segment list each time, and an 844 KB heredoc of `"$PROM/..."` lines
+# took 56 s, most of the hook timeout. An empty value means unresolved.
+declare -A VAR_VALS=()
+var_values() {
+    local name=$1 vals="" line
+    if ! grep -qE "(^| )(for|read|mapfile|readarray|getopts|select|unset)( [^ ]+)* ${name}( |$)|(^| )${name}\+=|-v ${name}( |$)" <<<"$segs"; then
+        while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            if [[ "$line" =~ ^\ ?((export|local|declare|readonly)\ )?${name}=(https?://[^\ ]+)\ ?$ ]]; then
+                vals="$vals ${BASH_REMATCH[3]}"
+            else
+                vals=""; break
+            fi
+        done <<<"$(grep -E "(^| )${name}=" <<<"$segs")"
+        [[ "$vals" == *'$'* ]] && vals=""
+    fi
+    VAR_VALS[$name]=$vals
+}
+
+# Sets RESOLVED rather than printing it, so the caller needs no $(…) subshell
+# and the VAR_VALS cache survives between segments.
+resolve_vars() {
+    local seg=$1 rest=$1 name vals
+    local -A seen=()
+    while [[ "$rest" =~ \$\{?([A-Za-z_][A-Za-z0-9_]*) ]]; do
+        rest=${rest#*"${BASH_REMATCH[0]}"}
+        name=${BASH_REMATCH[1]}
+        [ -n "${seen[$name]+x}" ] && continue
+        seen[$name]=1
+        [ -n "${VAR_VALS[$name]+x}" ] || var_values "$name"
+        vals=${VAR_VALS[$name]}
+        [ -n "$vals" ] || continue
+        while [[ "$seg" =~ ^(.*)\$(\{${name}\}|${name})([^A-Za-z0-9_].*)?$ ]]; do
+            seg="${BASH_REMATCH[1]}$vals${BASH_REMATCH[3]}"
+        done
+    done
+    RESOLVED=$seg
+}
+
 raw_http_write() {
-    local seg
+    local seg segs
     grep -qE "${B}(curl|wget)\b" <<<"$nq" || return 1
+    segs=$(segments)
     # One grep picks the client segments (the same test the loop used to run per
     # segment): a big heredoc splits into thousands, and a process each cost seconds.
     while IFS= read -r seg; do
         [ -n "$seg" ] || continue
         write_shaped_http "$seg" || continue
-        outbound_target "$(tr '[:upper:]' '[:lower:]' <<<"$seg")" && return 0
-    done <<<"$(segments | grep -E "${B}(curl|wget)\b")"
+        # Prefix assignments are not targets (see resolve_vars).
+        while [[ "$seg" =~ ^\ ?[A-Za-z_][A-Za-z0-9_]*=[^\ ]*\ (.*)$ ]]; do seg=${BASH_REMATCH[1]}; done
+        [[ "$seg" == *'$'* ]] && { resolve_vars "$seg"; seg=$RESOLVED; }
+        outbound_target "${seg,,}" && return 0
+    done <<<"$(grep -E "${B}(curl|wget)\b" <<<"$segs")"
     return 1
 }
 
@@ -431,6 +548,130 @@ scripted_http_write() {
     } || return 1
     outbound_target "$n"
 }
+
+# --- the sink test: file writes are data, not calls (AI_ST-109) ----------
+#
+# Ruled 2026-09-25 (day-plan-2026-09-25/outbound-guard-ruling.md): when EVERY
+# sink of a command is a file path, client text inside it is data and the guard
+# stands down. Writing a file that contains `curl` posts nothing; if the file is
+# run later, that run is its own Bash call and is gated then. Nine recorded
+# false blocks (harness-friction.md, 2026-09-14..29) were all this shape: a
+# heredoc creating a spec whose body cites URLs, the guard's own prescribed
+# outbound draft quoting the `gh repo create` it stages, a script authored with
+# `curl -K -` and its URL in a variable, and a `printf >>` of a friction line
+# quoting the call it describes. Each ended at the Write tool and prevented
+# nothing.
+#
+# It runs on the RAW $cmd: $nq has lost the quotes and line ends that say what
+# is code and what is data. It stands down only when it can show the whole
+# command is inert, and fails closed (gates as before) on anything else:
+#   - every simple command's first word is one of a short list that cannot
+#     reach the network: cat tee printf echo mkdir touch chmod cd true. Every
+#     other word, including bash/sh/python/ssh/sudo/env/xargs, `{`, `(`, `if`,
+#     `for`, a `$VAR` command and a prefix assignment (`X=1 cat`), gates. A
+#     plain assignment (`D=~/vault/...`) is allowed, except to PATH, IFS,
+#     BASH_ENV, ENV, LD_* and the like, which change what a later word runs;
+#   - so a pipe or heredoc into an interpreter, a `bash script.sh` after the
+#     write, and a real client anywhere on the line all keep the gate on: one
+#     network sink is enough;
+#   - command and process substitution (`$(`, a backtick, `<(`, `>(`) execute,
+#     so they gate: outside single quotes in code, and anywhere in the body of
+#     an UNQUOTED heredoc, which the shell expands. A quoted heredoc
+#     (`<<'EOF'`, `<<"EOF"`, `<<\EOF`) body is literal and is not inspected;
+#   - `$'…'` quoting, an unclosed quote, an unterminated heredoc, any mention
+#     of /dev/tcp or /dev/udp (a redirect there IS a network sink), and the
+#     no-jq path (raw JSON, quotes unknowable) all gate.
+# The gh/forge branches sit behind this test too: L15 (2026-09-22) was the gh
+# branch refusing a draft that quoted `gh repo create`, so the ruling's "those
+# branches never false-positived" was already out of date. A command made only
+# of the words above cannot run gh.
+#
+# Residual risk, accepted by the ruling: a staged file could be executed by
+# something this hook never sees (cron, systemd, a remote host).
+files_only_sinks() {
+    [ "$cmd" != "$payload" ] || return 1
+    [[ "$cmd" == *[Dd][Ee][Vv]/[Tt][Cc][Pp]* || "$cmd" == *[Dd][Ee][Vv]/[Uu][Dd][Pp]* ]] && return 1
+    [ "$(printf '%s\n' "$cmd" | LC_ALL=C awk -v sq="'" '
+        function endword(   bare) {
+            if (!inw) return
+            inw = 0; bare = w; w = ""
+            if (redir) { redir = 0; return }          # a redirect target is a path
+            if (ncw) return                           # an argument
+            # NAME=value, with no quote before the `=` (qw: where a quote first began)
+            # Not one that changes how later words run: PATH could resolve `cat`
+            # to anything.
+            if (match(bare, /^[A-Za-z_][A-Za-z0-9_]*=/) && (qw == 0 || qw > RLENGTH)) {
+                if (bare ~ /^(PATH|BASH_ENV|ENV|IFS|LD_[A-Z_]*|PROMPT_COMMAND|SHELLOPTS|BASHOPTS|BASH_[A-Z_]*|GLOBIGNORE)=/) bad = 1
+                assign = 1; return
+            }
+            if (assign) bad = 1                       # prefix assignment: gate
+            else if (bare !~ /^(cat|tee|printf|echo|mkdir|touch|chmod|cd|true)$/) bad = 1
+            ncw = 1
+        }
+        function newcmd() { endword(); ncw = 0; assign = 0; redir = 0 }
+        function addc(c) { if (!inw) { inw = 1; qw = 0 } ; w = w c }
+        { s = s $0 "\n" }
+        END {
+            n = length(s); q = ""; bad = 0; nh = 0
+            for (i = 1; i <= n && !bad; i++) {
+                c = substr(s, i, 1); c2 = substr(s, i, 2)
+                if (q == sq) { if (c == sq) q = ""; else w = w c; continue }
+                if (q == "\"") {
+                    if (c == "\\") { w = w substr(s, i + 1, 1); i++; continue }
+                    if (c2 == "$(" || c == "`") { bad = 1; break }
+                    if (c == "\"") q = ""; else w = w c
+                    continue
+                }
+                # unquoted shell code
+                if (c == "\\") {
+                    if (substr(s, i + 1, 1) == "\n") { i++; continue }
+                    addc(substr(s, i + 1, 1)); i++; continue
+                }
+                if (c2 == "$(" || c == "`" || c2 == "$" sq || c2 == "<(" || c2 == ">(" || c == "(" || c == ")") { bad = 1; break }
+                if (c == sq || c == "\"") { if (!inw) { inw = 1; qw = 0 } ; if (!qw) qw = length(w) + 1; q = c; continue }
+                if (c == "#" && !inw) { while (i < n && substr(s, i + 1, 1) != "\n") i++; continue }
+                if (c == "\n") {
+                    newcmd()
+                    for (k = 1; k <= nh; k++) {               # heredoc bodies: data
+                        found = 0
+                        while (i < n) {
+                            j = index(substr(s, i + 1), "\n"); if (j == 0) j = n - i
+                            line = substr(s, i + 1, j - 1); i = i + j
+                            t = line; if (hd[k]) sub(/^\t+/, "", t)
+                            if (t == ht[k]) { found = 1; break }
+                            if (!hq[k] && (index(line, "$(") || index(line, "`"))) { bad = 1; break }
+                        }
+                        if (!found) bad = 1
+                    }
+                    nh = 0; continue
+                }
+                if (c == ";" || c == "|" || c == "&") { newcmd(); continue }
+                if (c == " " || c == "\t") { endword(); continue }
+                if (c2 == "<<" && substr(s, i + 2, 1) != "<") {
+                    endword(); j = i + 2; dash = 0
+                    if (substr(s, j, 1) == "-") { dash = 1; j++ }
+                    while (substr(s, j, 1) ~ /[ \t]/) j++
+                    wd = ""
+                    while (j <= n && substr(s, j, 1) !~ /[ \t\n;|&<>()]/) { wd = wd substr(s, j, 1); j++ }
+                    quoted = (wd ~ /["\047\\]/); gsub(/["\047\\]/, "", wd)
+                    if (wd == "") { bad = 1; break }
+                    nh++; ht[nh] = wd; hd[nh] = dash; hq[nh] = quoted
+                    i = j - 1; continue
+                }
+                if (c == "<" || c == ">") {               # redirect: the next word is a target
+                    endword()
+                    while (substr(s, i + 1, 1) ~ /[<>&|]/) i++
+                    redir = 1; continue
+                }
+                addc(c)
+            }
+            if (q != "") bad = 1
+            if (!bad) { newcmd(); if (nh) bad = 1 }
+            print (bad ? "GATE" : "FILES")
+        }')" = FILES ]
+}
+
+files_only_sinks && exit 0
 
 # --- gh: the verbs that publish -----------------------------------------
 #

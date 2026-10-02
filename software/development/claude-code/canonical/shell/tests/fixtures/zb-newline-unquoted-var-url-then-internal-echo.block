@@ -1,0 +1,2 @@
+curl -s -X POST -d x $URL
+echo see http://plane.homelab/x

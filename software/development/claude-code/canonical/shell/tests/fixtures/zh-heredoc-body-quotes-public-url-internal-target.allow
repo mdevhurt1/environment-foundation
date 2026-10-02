@@ -1,0 +1,7 @@
+curl -s -X POST \
+  -H "Content-Type: application/json" \
+  -d @- \
+  http://plane.homelab/api/v1/workspaces/homelab/projects/p/issues/ <<'EOF'
+{"description_html":"<p>see https://github.com/x/y and https://arxiv.org/abs/1</p>", "name":"don't panic; it's fine"}
+EOF
+echo posted

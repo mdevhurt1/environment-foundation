@@ -1,0 +1,4 @@
+tee ~/bin/jira-post.sh >/dev/null <<'EOF'
+curl -sS -X POST -d @body.json "$JIRA_URL/rest/api/3/issue"
+EOF
+chmod +x ~/bin/jira-post.sh && bash ~/bin/jira-post.sh

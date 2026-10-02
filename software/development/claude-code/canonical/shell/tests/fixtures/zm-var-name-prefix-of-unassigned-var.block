@@ -1,0 +1,2 @@
+U=http://plane.homelab/x
+curl -s -X POST -d '{"text":"hi"}' "$URL"

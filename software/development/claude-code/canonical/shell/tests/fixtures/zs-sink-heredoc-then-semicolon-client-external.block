@@ -1,0 +1,4 @@
+cat > ~/vault/20-surface/company/tasks/topic-rerank/spec.md <<'EOF'; curl -X POST https://api.example.org/v1/rerank -d @spec.md
+# Topic rerank spec
+- Dataset: https://huggingface.co/datasets/ms_marco
+EOF

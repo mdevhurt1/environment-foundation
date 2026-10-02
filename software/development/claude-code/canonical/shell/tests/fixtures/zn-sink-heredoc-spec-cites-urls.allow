@@ -1,0 +1,15 @@
+mkdir -p ~/vault/20-surface/company/tasks/topic-rerank && cat > ~/vault/20-surface/company/tasks/topic-rerank/spec.md <<'EOF'
+# Topic rerank spec
+
+## Sources
+- Dataset: https://huggingface.co/datasets/ms_marco (don't mirror it; we'll fetch on demand)
+- Baseline repo: https://github.com/castorini/pyserini
+- Paper: https://arxiv.org/abs/2104.08663
+
+## Reproducing the hosted baseline
+The vendor's rerank endpoint is called like this; it's listed for reference only:
+
+    curl -X POST https://api.example.org/v1/rerank -H 'Content-Type: application/json' -d '{"query":"q","docs":["a","b"]}'
+
+A query with a ; or a | in it is fine & so is an apostrophe.
+EOF

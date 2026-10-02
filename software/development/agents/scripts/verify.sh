@@ -35,8 +35,9 @@ tmp=$(mktemp -d -p "$HOME"); cd "$tmp" || exit 1   # under $HOME: agy trusts onl
 trap 'kill $(jobs -p) 2>/dev/null; cd /; rm -rf "$tmp"' EXIT
 git init -q                              # inside a repo: instructions must reach a project session, which is where they matter
 
-# LLM probes. They share no state, so all of them start now and run in parallel, each under its own timeout;
-# the gate waits once for the slowest instead of summing every probe (AI_ST-131). Rows print below in fixed order.
+# LLM probes start in parallel, except the two Pi calls: both use the same
+# local Ollama and a loaded probe can make the other time out. Rows print below
+# in fixed order (AI_ST-131).
 probe() { # probe <name> <timeout-seconds> <command...>: reply (stdout) to $tmp/<name>.out
     local name="$1" secs="$2"; shift 2
     timeout "$secs" "$@" >"$tmp/$name.out" 2>/dev/null </dev/null &
@@ -45,12 +46,14 @@ probe claude      120 claude -p "$q"
 probe codex       300 codex exec --skip-git-repo-check -o "$tmp/codex.txt" "$q"
 # shellcheck disable=SC2086  # PI_ARGS is a word list of extra flags, split on purpose
 probe pi          120 pi -p ${PI_ARGS:-} "$q"
+pi_probe_pid=$!
 [ -f "$HOME/.agents/agy-context-path" ] && probe agy 120 agy -p "$q"
 probe codex-env   300 codex exec --skip-git-repo-check -o "$tmp/env.txt" "$envq"
 probe agy-env     120 agy -p --dangerously-skip-permissions "$envq"
 probe claude-env  120 claude -p --dangerously-skip-permissions "$envq"
-probe pi-env      300 pi -p "$envq"
 probe codex-skills 300 codex exec --skip-git-repo-check -o "$tmp/skills.txt" "List the skills you have available, names only."
+wait "$pi_probe_pid" 2>/dev/null
+probe pi-env      300 pi -p "$envq"
 wait
 
 instructed "claude" "$(cat "$tmp/claude.out" 2>/dev/null)"

@@ -77,9 +77,20 @@ if [ "$n" = "$want" ] && [ "$m" -eq "$nwant" ] && [ "$roots_ok" -eq 1 ] && [ -d 
     echo "PASS skills (exactly the $nwant kept names, each with SKILL.md; claude and agy roots link each one; codex and pi read ~/.agents/skills natively; codex managed skills intact)"; pass=$((pass+1))
 else echo "FAIL skills (reasons above; fix: bash $SCRIPT_DIR/install.sh)"; fail=$((fail+1)); fi
 
-# Hooks
-h=$(python3 -c "import json,os;d=json.load(open('$HOME/.claude/settings.json'))['hooks'];print(' '.join(sorted(e+':'+os.path.basename(c['command'].split()[0]) for e,v in d.items() for g in v for c in g['hooks'])))")
-if [ "$h" = "PreToolUse:cc-outbound-guard.sh SessionStart:cc-memory-inject.sh" ]; then echo "PASS hooks (PreToolUse cc-outbound-guard.sh, SessionStart cc-memory-inject.sh)"; pass=$((pass+1)); else echo "FAIL hooks ($h)"; fail=$((fail+1)); fi
+# Hooks: read from the hand-kept settings.json; a missing or malformed file is a FAIL with a fix, never a traceback (AI_ST-128)
+st="$HOME/.claude/settings.json"; seed="$REPO_ROOT/software/development/claude-code/canonical/settings.json"
+h=$(python3 - "$st" 2>&1 <<'PY'
+import json, os, sys
+try:
+    d = json.load(open(sys.argv[1])).get('hooks') or {}
+    print(' '.join(sorted(e + ':' + os.path.basename(c['command'].split()[0]) for e, v in d.items() for g in v for c in g['hooks'])))
+except FileNotFoundError: print('settings.json missing')
+except (ValueError, KeyError, TypeError, AttributeError, IndexError) as x: print('settings.json unreadable: %s' % (str(x) or type(x).__name__))
+PY
+)
+if [ "$h" = "PreToolUse:cc-outbound-guard.sh SessionStart:cc-memory-inject.sh" ]; then echo "PASS hooks (PreToolUse cc-outbound-guard.sh, SessionStart cc-memory-inject.sh)"; pass=$((pass+1))
+elif [ "$h" = "settings.json missing" ]; then echo "FAIL hooks: $st missing (fix: bash $SCRIPT_DIR/install.sh seeds it from $seed)"; fail=$((fail+1))
+else echo "FAIL hooks (${h:-none}; fix: copy the hooks block of $seed into $st)"; fail=$((fail+1)); fi
 
 # Outbound guard behaviour, not just its registration: the fixture suite (AI_ST-110)
 gt="$REPO_ROOT/software/development/claude-code/canonical/shell/tests/test-outbound-guard.sh"

@@ -23,7 +23,7 @@ truth** for non-secret, non-machine-specific Claude Code configuration.
 ## Layout
 
 - `CLAUDE.md` — global Claude instructions (loaded on every session)
-- `settings.json` — Claude Code settings (no secrets, no per-machine, no model); not linked: `~/.claude/settings.json` is a real file kept by hand
+- `settings.json` — Claude Code settings (no secrets, no per-machine, no model); not linked: the seed `agents/scripts/install.sh` copies to `~/.claude/settings.json` only when that file is absent; the live file is kept by hand
 - `model-policy.json` — role->model policy (see the module README)
 - `statusline-command.sh` — statusline renderer (mode, cwd, context %)
 - `shell/cc-memory-inject.sh` — SessionStart hook: points the session at MEMORY.md (AI_ST-123)

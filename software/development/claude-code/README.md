@@ -28,7 +28,9 @@ git clone <gitea>/mhurt/environment-secrets ~/environment-secrets
 ~/environment-secrets/install.sh                          # settings.local.json and ~/.config/agents/env
 ```
 
-`agents/scripts/install.sh` is idempotent: it re-points links and never copies.
+`agents/scripts/install.sh` is idempotent: it re-points links and never copies,
+except `~/.claude/settings.json`, which it seeds from `canonical/settings.json`
+**only when the file does not exist** (see below).
 
 ## Verify
 
@@ -70,8 +72,18 @@ directory holding one link per kept skill, beside any vendor-synced skills.
 
 `~/.claude/settings.json` is a **real file, kept by hand**: Claude Code writes
 back to it, so a link would turn every app-side change into a repo diff.
-Nothing deploys `canonical/settings.json` today (AI_ST-128). Secrets and
-per-machine values never go in either file; they belong in
+`canonical/settings.json` is the **seed** for a machine that has none:
+`agents/scripts/install.sh` copies it into place only when
+`~/.claude/settings.json` is absent, and never edits an existing file (a
+symlink there is reported and left alone). After that the live file is the
+operator's; the seed is not a mirror of it and is expected to differ in
+personal preferences (plugins, notifications, UI). Change the seed when a
+fresh machine should start differently, not to track the live file.
+
+What must hold in every live file is the hooks block (the outbound guard and
+the memory pointer). `agents/scripts/verify.sh` asserts it and, on a missing,
+malformed or hookless file, fails with the fix instead of a traceback. Secrets
+and per-machine values never go in either file; they belong in
 `settings.local.json` (environment-secrets).
 
 ## Parked

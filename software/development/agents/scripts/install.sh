@@ -72,6 +72,17 @@ link "$cc/shell/cc-memory-inject.sh"    "$HOME/.claude/cc-memory-inject.sh"
 link "$cc/shell/cc-outbound-guard.sh"   "$HOME/.claude/cc-outbound-guard.sh"
 link "$cc/shell/cc-memory-index-regen.sh" "$HOME/.claude/cc-memory-index-regen.sh"   # AI_ST-116: the path MEMORY.md names
 
+# Claude Code settings.json: a real file the app writes back to, so never a link. Seed it from
+# canonical/ only when absent (a fresh machine otherwise gets no hooks); never edit an existing one (AI_ST-128).
+st="$HOME/.claude/settings.json"
+if [ -L "$st" ]; then
+    log_warn "left $st alone: it is a symlink (-> $(readlink "$st")); settings.json must be a real file"
+    log_warn "  fix: save anything you want from it, then rm $st and re-run install.sh to seed a real file"
+elif [ ! -e "$st" ]; then
+    cp "$cc/settings.json" "$st"
+    echo "seeded $st from $cc/settings.json (absent before; later edits are yours)"
+fi
+
 # Antigravity CLI: its global context path, recorded once in ~/.agents/agy-context-path
 if [ -f "$HOME/.agents/agy-context-path" ]; then
     agy_path="$(head -n1 "$HOME/.agents/agy-context-path")"

@@ -55,7 +55,8 @@ it serves.
    that no fourth independent qualifying model was available.
 
 At the 2026-10-02 tier table, work produced by a tier 1 model can be reviewed only by
-tier 1 models: Claude Fable, Mythos, Opus 5.x, GPT-5-class, and Gemini 3-class. Pi on
+tier 1 models: Claude Fable, Mythos, Opus 5.x, GPT-5-class (not mini or nano), gpt-6-sol,
+and Gemini 3-class (not flash). `model-tiers.md` is the authority where these differ. Pi on
 its default local qwen model is tier 3 and can sit only on panels for tier 3 work.
 
 ## Running a round

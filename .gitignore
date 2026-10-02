@@ -19,6 +19,7 @@ Thumbs.db
 
 # Logs
 *.log
+__pycache__/
 
 # === Claude Code SOP guardrails ===
 # Never commit decrypted secrets or local-only Claude state

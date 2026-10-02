@@ -51,8 +51,9 @@ reviewers saw, even after the rubric has moved on (`git log -p review-rubric.md`
 ```bash
 cd software/development/agents/review
 round=~/vault/20-surface/company/tasks/<ISSUE>/reviews/round-1
+# Set MODEL_1..MODEL_4 to four distinct qualifying model ids verified in their runtimes.
 tools/assemble_prompts.py --producer claude-fable-5-1 \
-  --reviewer claude-opus-5-5 --reviewer claude-mythos-1 --reviewer gpt-5 --reviewer gemini-3-pro \
+  --reviewer "$MODEL_1" --reviewer "$MODEL_2" --reviewer "$MODEL_3" --reviewer "$MODEL_4" \
   --brief brief.md --out "$round" --root ~/environment-foundation path/to/artefact ...
 # run each $round/seat-N.prompt.txt through its reviewer; save the reply as $round/seat-N.md
 tools/tally_concurrence.py --manifest "$round/panel.json"   # exit 2 = a seat is void, rerun it

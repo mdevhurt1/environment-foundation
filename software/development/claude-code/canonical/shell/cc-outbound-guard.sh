@@ -1029,6 +1029,47 @@ files_only_sinks() {
 
 files_only_sinks && exit 0
 
+# graphql_queries_literal -- true when the raw command has a graphql query
+# field and EVERY such field's value is literal text: one single-quoted string,
+# a double-quoted string without `$` or backticks, or a bare word without them
+# and without the `@file` form. A "$Q" or @file query hides whether it is a
+# mutation, so it fails closed (review r2 ADJ-3). The raw $cmd is read, not a
+# segment, because a multi-line query reaches the segment loop with its quotes
+# already stripped.
+graphql_queries_literal() {
+    local rest=$cmd found=0
+    local field_re=' (-[fF]|--field|--raw-field)[= ]?query=(.*)$'
+    local value_re='^('\''[^'\'']*'\''|"[^"$`\\]*"|[^[:space:]"'\''$`@\\][^[:space:]"'\''$`\\]*)([[:space:]]|$)'
+    while [[ "$rest" =~ $field_re ]]; do
+        rest=${BASH_REMATCH[2]}; found=1
+        [[ "$rest" =~ $value_re ]] || return 1
+    done
+    [ "$found" -eq 1 ]
+}
+gh_api_write() {
+    local seg lower
+    has "${B}gh api\\b" || return 1
+    while IFS= read -r seg; do
+        lower=${seg,,}
+        has "${B}gh api\\b" "$lower" || continue
+        if has 'graphql' "$lower" \
+           && has ' (-[fF]|--field|--raw-field)[= ]?query=' "$seg" \
+           && graphql_queries_literal \
+           && ! has '\bmutation\b' "$lower" \
+           && ! has ' (-x ?|--method[ =])(put|patch|delete)\b' "$lower" \
+           && ! has ' --input\b' "$lower"; then
+            continue
+        fi
+        if has ' (-x ?|--method[ =])(post|put|patch|delete)\b' "$lower" \
+           || has ' (--field|--raw-field|--input)\b' "$lower" \
+           || has ' -[fF] ?[^ -]' "$seg" \
+           || { has 'graphql' "$lower" && has 'mutation' "$lower"; }; then
+            return 0
+        fi
+    done <<<"$(segments)"
+    return 1
+}
+
 # --- gh: the verbs that publish -----------------------------------------
 #
 # The allowed side of each pair is the one the daily loop runs constantly:
@@ -1049,12 +1090,7 @@ elif has "${B}gh alias (set|delete)\b"; then
     reason="gh alias definition (an alias can rename a posting verb past this gate)"
 
 # --- gh api: read or write, decided by flags that carry no verb -----------
-elif has "${B}gh api\b" && {
-        has ' (-x ?|--method[ =])(post|put|patch|delete)\b' \
-        || has ' (--field|--raw-field|--input)\b' \
-        || has ' -[fF] ?[^ -]' "$nq" \
-        || { has 'graphql' && has 'mutation'; }
-     }; then
+elif gh_api_write; then
     reason="gh api call that mutates (explicit verb, a field flag, or a graphql mutation)"
 
 # --- raw HTTP leaving the LAN --------------------------------------------

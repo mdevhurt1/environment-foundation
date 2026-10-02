@@ -1,0 +1,6 @@
+gh api graphql -f query='
+{
+  repository(owner:"o", name:"r") {
+    discussion(number:1) { title body }
+  }
+}' --jq '.data.repository.discussion.title'

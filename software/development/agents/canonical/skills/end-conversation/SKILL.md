@@ -88,7 +88,9 @@ plan → skip to Step 4. Normal for ad-hoc work.
 No Plane issue, but Step 2 **did** capture a new spec or plan → this work
 outlives the session and has no board presence. Ask **one** question: does
 this have a Plane issue to link, and which? Answer "no", or no answer →
-skip to Step 4 and say so in the final report.
+skip to Step 4 and say so in the final report. An issue named → post the
+comment `<spec or plan captured> (<path>)` on it, leave its state and
+labels unchanged, ask nothing further, and re-read it as below.
 
 **This is not a second question.** It fires only where the bookend
 otherwise asks none: a session with an issue asks its one

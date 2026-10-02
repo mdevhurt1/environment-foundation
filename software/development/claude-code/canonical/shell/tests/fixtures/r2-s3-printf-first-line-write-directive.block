@@ -1,0 +1,1 @@
+printf 'data = "x"\nurl = "https://example.org/x"\n' | curl -K -

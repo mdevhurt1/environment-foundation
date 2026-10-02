@@ -609,11 +609,11 @@ config_stdin_text() {
     local function_call_re='(^|[[:space:](])([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*$'
     CONFIG_TEXT=""
     # A preceding printf/echo is visible only when it is piped to this curl.
-    if [[ "$cmd" =~ \|[[:space:]]*curl[^\n]*(-K|--config)[=\ ]?- ]] \
+    if [[ "$cmd" =~ \|[[:space:]]*curl[^[:cntrl:]]*(-K|--config)[=\ ]?- ]] \
        && [[ "$previous" =~ (^|[[:space:]])(printf|echo)[[:space:]] ]]; then
         CONFIG_TEXT=$previous; return 0
     fi
-    if [[ "$cmd" =~ \|[[:space:]]*curl[^\n]*(-K|--config)[=\ ]?- ]] \
+    if [[ "$cmd" =~ \|[[:space:]]*curl[^[:cntrl:]]*(-K|--config)[=\ ]?- ]] \
        && [[ "$previous" =~ $function_call_re ]]; then
         source_name=${BASH_REMATCH[2]}
         CONFIG_TEXT=$(grep -E "(^|[[:space:]])${source_name}\(\)[[:space:]]*\{" <<<"$cmd")
@@ -668,6 +668,8 @@ raw_http_write() {
         # curl accepts `url = x`, `url: x`, `url x` and `--url x` in a config.
         if [[ "$seg" =~ (^|[[:space:]])(-K|--config)[=\ ]?-($|[[:space:]]) ]]; then
             if config_stdin_text "$seg" "$previous"; then
+                [[ "$CONFIG_TEXT" == printf\ * ]] && CONFIG_TEXT=${CONFIG_TEXT#printf }
+                [[ "$CONFIG_TEXT" == echo\ * ]] && CONFIG_TEXT=${CONFIG_TEXT#echo }
                 config_urls=$(grep -iE '^[[:space:]]*(--)?url([[:space:]]*[=:]|[[:space:]])' <<<"${CONFIG_TEXT//\\n/$'\n'}")
                 config_flag=$seg
                 config_flag=${config_flag//--config=-/}; config_flag=${config_flag//--config -/}
@@ -676,7 +678,10 @@ raw_http_write() {
                     previous=$seg; continue
                 fi
                 if [ -n "$config_urls" ] && outbound_target "${config_urls,,}"; then return 0; fi
-                if outbound_target "${CONFIG_TEXT,,}"; then return 0; fi
+                if [ -n "$config_urls" ] && [[ "$seg" != *'$'* ]]; then
+                    url_targets "$seg"
+                    [ "${#TARGETS[@]}" -eq 0 ] && { previous=$seg; continue; }
+                fi
             fi
         fi
         # Prefix assignments are not targets (see resolve_vars).

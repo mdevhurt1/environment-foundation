@@ -1,0 +1,1 @@
+printf '%s\n' 'data = x' 'url = http://plane.homelab/a' | curl -K - http://plane.homelab/b

@@ -1,0 +1,4 @@
+python3 - http://plane.homelab <<'PY'
+import requests
+requests.post("http://plane.homelab/api", data='x')
+PY

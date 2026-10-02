@@ -121,9 +121,14 @@ under the encoded **full cwd** (a worktree session's is NOT under
 so `_` and `.` go too (`AI_ST-100` -> `AI-ST-100`; checked against all 169
 project dirs 2026-10-01). The dir name starts with `-`, so keep the path prefix:
 
+Nothing exports the goal to a shell, so fill in the first line yourself:
+
 ```bash
+session_goal='<the one-sentence goal from session-start Step 5>'
 transcript=$(ls -t ~/.claude/projects/"$(pwd | sed 's/[^A-Za-z0-9-]/-/g')"/*.jsonl 2>/dev/null | head -1)
 slug=$(echo "$session_goal" | tr -cs 'A-Za-z0-9' '-' | tr A-Z a-z | sed 's/^-//;s/-$//')
+[ -n "$transcript" ] && [ -n "$slug" ] || { echo "no transcript or empty goal: not rendered"; exit 1; }
+mkdir -p ~/vault/20-surface/claude-transcripts
 bash ~/.agents/skills/end-conversation/render-transcript.sh \
   "$transcript" \
   ~/vault/20-surface/claude-transcripts/$(date +%Y-%m-%d)-${slug}.md \

@@ -65,6 +65,10 @@ out=$(bash "$check"); lines=$(grep -c '^  - ' <<<"$out"); hdr=$(grep -c '^Ritual
 if [ "$lines" -eq 3 ] && [ "$hdr" -eq 1 ]; then echo "PASS three overdue -> one header, three lines"; pass=$((pass+1))
 else echo "FAIL three overdue: header=$hdr lines=$lines: $out"; fail=$((fail+1)); fi
 
+base 17; export TZ=America/New_York; RITUAL_TODAY=2026-03-16; RITUAL_INFRA93_TARGET=none
+RITUAL_STATE_DIR=$(fixture dst-spring 2026-03-08)
+run "eight calendar days across spring DST -> flagged" 'ring-maintenance: last run 2026-03-08, 8 days ago'
+
 echo "passed=$pass failed=$fail"
 [ $((pass + fail)) -gt 0 ] || { echo "FAIL no cases ran"; exit 1; }
 [ "$fail" -eq 0 ]

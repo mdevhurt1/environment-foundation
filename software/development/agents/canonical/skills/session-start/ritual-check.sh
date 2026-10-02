@@ -28,8 +28,8 @@ weekly=7
 
 days_since() { # days_since YYYY-MM-DD -> whole days from that date to $today
     local a b
-    a=$(date -d "$1" +%s 2>/dev/null) || return 1
-    b=$(date -d "$today" +%s) || return 1
+    a=$(date -u -d "$1" +%s 2>/dev/null) || return 1
+    b=$(date -u -d "$today" +%s) || return 1
     echo $(( (b - a) / 86400 ))
 }
 

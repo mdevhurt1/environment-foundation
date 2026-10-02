@@ -31,7 +31,7 @@ run on this machine — clone `environment-secrets` and run its `install.sh`. Do
 2026-09-03 (verified, EA probe) a plain curl from an unsandboxed session
 returns 200 with no overrides. Only if that probe fails with
 `Network is unreachable` (seen historically in sandboxed sessions where
-`no_proxy` includes `192.168.0.0/16` and the sandbox firewall blocks direct
+`no_proxy` includes the private LAN ranges and the sandbox firewall blocks direct
 LAN connections) apply the override:
 
 ```bash
@@ -57,7 +57,8 @@ X-Api-Key: $PLANE_API_KEY
 
 Base URL pattern: `http://plane.homelab/api/v1/workspaces/{workspace_slug}/`
 
-Known workspace slugs: `homelab`, `umd`
+Default workspace slug: `homelab`. The API key cannot list workspaces; other
+slugs are recorded in the operator's vault, not here.
 
 ---
 
@@ -85,7 +86,18 @@ GET /api/v1/workspaces/{workspace_slug}/projects/
 Key response fields per result:
 - `id` → `project_id` (required in all subsequent project-scoped calls)
 - `name` → human-readable name
-- `identifier` → short code (e.g. `ENPM701`)
+- `identifier` → short code (e.g. `INFRA`)
+
+Resolve an identifier to its `project_id` (project IDs are not recorded in this
+skill; they change when a project is recreated):
+
+```bash
+curl -s -H "X-Api-Key: $PLANE_API_KEY" \
+  "http://plane.homelab/api/v1/workspaces/homelab/projects/" \
+  | python3 -c "import json,sys;[print(p['identifier'],p['id'],p['name'],sep='\t') for p in json.load(sys.stdin)['results']]"
+```
+
+Archived projects are left out of this list; add `?include_archived=true` to see them.
 
 ### List states
 
@@ -245,40 +257,8 @@ DELETE /api/v1/workspaces/{workspace_slug}/projects/{project_id}/modules/{module
 
 ---
 
-## Known Workspaces
-
-| Slug | Purpose |
-|---|---|
-| `homelab` | Home lab infrastructure (Plane Stack, AI Stack, Media Stack, Monitoring, Infrastructure, Research Queue) |
-| `umd` | University coursework (Spring 2026 cohort fully archived 2026-05-19; reserved for future terms) |
-
-## Known Projects (homelab workspace)
-
-| Identifier | Name | Project ID |
-|---|---|---|
-| `PLANE` | Plane Stack | `870b6c1b-983a-4dae-b0e5-20474fe928ad` |
-| `INFRA` | Infrastructure | `9c19f93e-3d33-4e2d-8a39-e76cf983caf3` |
-| `MEDIA` | Media Stack | `b5fdad68-311f-4bba-b50a-8cc938e43249` |
-| `AI_ST` | AI Stack | `06588b14-1056-4369-b2a8-a5d27f624265` |
-| `MONIT` | Monitoring | `e056f3d9-a6a6-40ef-948c-09909b6a1fa6` |
-| `RESEARCH` | Research Queue | `70bcb81f-1336-44bb-a78a-79e890445c82` |
-| `SENT` | Sentinel | `8834d426-557a-4f96-bbd4-92fe16457b43` |
-
-## Archived Projects
-
-The umd workspace is empty as of 2026-05-19 (Spring 2026 coursework complete). For reference if those archives are unarchived:
-
-| Identifier | Name | Project ID | Archived |
-|---|---|---|---|
-| `ENPM701` | ENPM 701 Grand Challenge (held all ENPM701 work including Phase 5/6 final-project issues #14–#26) | `0f180c25-7635-4f1c-b0ab-295027f82439` | 2026-05-19 |
-| `ENPM673` | ENPM 673 Final Project (Visual Odometry) | `3f2f1379-f6e7-4088-bcf6-0e3e1e9b2ece` | 2026-05-19 |
-
 ## Operational Notes
 
-- **Intermittent failures vs sandbox/auth issues** *(scoped 2026-09-03: applies only to the mid-session cliff pattern — dozens of direct-LAN calls ran clean all evening on this workstation; do not cite this note as a reason Plane is unreachable up front)*: If HTTP requests return `000` / timeouts after earlier requests succeeded in the same session, the most likely cause is **the UDM SE IPS/Threat Management dropping the inter-VLAN HTTP session** — not a Plane stack outage. The workstation and the Plane host sit on different VLANs, so traffic traverses the UDM and IPS signatures occasionally flag legitimate API payloads (UUID paths, large JSON, bearer tokens). Diagnose:
-  1. `nc -zv plane.homelab 80` — if TCP succeeds but HTTP times out, it's a session-level drop (IPS smoking gun).
-  2. Check the UDM threat log (UniFi controller → Insights → Threats, or Settings → Security → Threat Management → History) for events involving the Plane host's address (`getent hosts plane.homelab`) around the failure time.
-  3. Only then suspect the Plane stack. VM 107 has very generous resource headroom (~5.8 GB RAM, 11 containers using <2 GB combined) — actual stack-internal outages are rare.
-  Don't churn on `no_proxy`/auth workarounds when the symptom is a sudden cliff after working calls. See cross-task memory `project_udm_ips_blocks_lan_api.md` (2026-05-19 root-cause investigation).
+- **Calls fail after earlier calls in the same session succeeded** (HTTP `000`, timeouts): check the network path before the Plane stack, and don't churn on `no_proxy`/auth workarounds. `nc -zv plane.homelab 80` succeeding while HTTP times out points at something on the path dropping the session, not at Plane. This applies only to that mid-session pattern; it is not a reason to assume Plane is unreachable up front. The site-specific diagnosis is in the operator's vault memory (`reference_plane_api`).
 - **Archive endpoint:** `POST /api/v1/workspaces/{slug}/projects/{id}/archive/` returns 204 on success. Sometimes returns 404 on the response despite the archive completing — verify with a follow-up list query using `?include_archived=true`.
 - **Delete endpoint:** `DELETE /api/v1/workspaces/{slug}/projects/{id}/` returns 204 on success.

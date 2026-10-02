@@ -1,31 +1,29 @@
 # Canonical Claude Code dotfiles
 
 Files in this directory are symlinked into `~/.claude/` by
-`../scripts/configure.sh`. They are the **single source of truth** for
-non-secret, non-machine-specific Claude Code configuration.
+`software/development/agents/scripts/install.sh`, the one owner of the
+`~/.claude` links since the 2026-09-19 reset. They are the **single source of
+truth** for non-secret, non-machine-specific Claude Code configuration.
 
 ## Hard rules
 
 1. **No secrets.** Use `environment-secrets` (sops-encrypted) for anything
-   sensitive. `cc-doctor` greps for common secret patterns and fails the
-   build if it finds them here.
+   sensitive.
 2. **No absolute paths to `$HOME`.** Use `~/` or `$HOME` so files work on
-   any machine. Doctor enforces.
+   any machine.
 3. **Edits go here, not to `~/.claude/`.** Edits to `~/.claude/CLAUDE.md`
-   would be silently overwritten on the next install. Edit
-   `canonical/CLAUDE.md`, commit, push, then `git pull` on every machine.
+   land in this repo through the link anyway; edit `canonical/`, commit, and
+   `git pull` on every machine.
 4. **Nothing model-related in `settings.json`.** No `model`,
-   `availableModels`, `enforceAvailableModels` or `fallbackModel`. That file
-   is a live symlink the running app writes back to, so a model key there
-   becomes a recurring phantom diff that reads like a human edit. The
+   `availableModels`, `enforceAvailableModels` or `fallbackModel`. The
    ROLE->model mapping is portable intent and lives in `model-policy.json`;
    a per-machine pin (if ever needed) lives in the untracked
-   `~/.claude/settings.local.json`. Doctor check 10a fails on a violation.
+   `~/.claude/settings.local.json`.
 
 ## Layout
 
 - `CLAUDE.md` — global Claude instructions (loaded on every session)
-- `settings.json` — Claude Code settings (no secrets, no per-machine, no model)
+- `settings.json` — Claude Code settings (no secrets, no per-machine, no model); not linked: `~/.claude/settings.json` is a real file kept by hand
 - `model-policy.json` — role->model policy (see the module README)
 - `statusline-command.sh` — statusline renderer (mode, cwd, context %)
 - `shell/cc-memory-inject.sh` — SessionStart hook: points the session at MEMORY.md (AI_ST-123)

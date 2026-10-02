@@ -131,9 +131,58 @@ B='(^| |;|&|\||\(|`|=|:|,)'
 # those needs a GitHub credential, so the whole middle of the policy was
 # uncovered.
 #
-# So the test is an ALLOWLIST now. Adding an internal service is a one-line
-# edit here, which is the point: the list is the policy, written down.
-INTERNAL='(plane\.homelab|git-docs\.homelab|localhost|127\.0\.0\.1|192\.168\.1\.[0-9]{1,3})'
+# So the test is an ALLOWLIST now: the list is the policy, written down.
+#
+# Where the list lives (AI_ST-133). Loopback is the only entry this file
+# carries. Every other internal host is site data, not policy, and this repo is
+# public: the list used to hard-code the home LAN range here and in the refusal
+# text below. It now comes from AGENTS_INTERNAL_HOSTS in ~/.config/agents/env,
+# the file environment-secrets/install.sh writes from the encrypted
+# settings.local.json env block. Adding an internal service is a one-line edit
+# THERE. The value is a space- or comma-separated list of entries:
+#
+#   a hostname          exact match, e.g. tracker.internal
+#   an IPv4 prefix + *  e.g. 192.0.2.* : the * covers every remaining octet
+#
+# The file is grepped for that one key, never sourced: sourcing would run the
+# file and pull every secret in it into this hook. The guard reads the FILE
+# rather than its own environment, so the verdict does not depend on how the
+# runtime that spawned the hook was launched.
+#
+# Fail closed. A missing file, a missing or empty key, and any entry that is
+# neither shape all leave loopback as the only internal host, so every other
+# write is refused. Such an entry is dropped rather than turned into a regex:
+# a `.*` or a bare `*` in it would allowlist the internet.
+#
+# This file sits beside the secrets, so editing it is no easier for an agent
+# than editing this script, which was always the other way to widen the gate.
+internal_entries() {
+    local line
+    line=$(grep -m1 -E '^(export )?AGENTS_INTERNAL_HOSTS=' "$HOME/.config/agents/env" 2>/dev/null) || return 0
+    line=${line#*=}
+    tr -d "\"'" <<<"$line" | tr ', ' '\n\n' | tr '[:upper:]' '[:lower:]' | while IFS= read -r e; do
+        if [[ "$e" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$ ]] \
+           || [[ "$e" =~ ^([0-9]{1,3}\.){1,3}\*$ ]]; then
+            printf '%s\n' "$e"
+        fi
+    done
+}
+entry_regex() {
+    local e=$1 known rest
+    if [[ "$e" == *'*' ]]; then
+        known=$(tr -cd . <<<"$e"); rest=$((4 - ${#known}))
+        e=${e%.\*}; e=${e//./\\.}
+        printf '%s(\\.[0-9]{1,3}){%d}' "$e" "$rest"
+    else
+        printf '%s' "${e//./\\.}"
+    fi
+}
+INTERNAL_ENTRIES=$(internal_entries)
+INTERNAL='localhost|127\.0\.0\.1'
+while IFS= read -r e; do
+    [ -n "$e" ] && INTERNAL="$INTERNAL|$(entry_regex "$e")"
+done <<<"$INTERNAL_ENTRIES"
+INTERNAL="($INTERNAL)"
 
 reason=""
 
@@ -485,8 +534,15 @@ standing rule means — and an upload of a vault path to one of them is
 exfiltration besides. None of them needs a GitHub credential, so none of them
 is covered by anything else.
 
+MSG
+# The configured list is read back here, not written into this public file.
+# An agent's refusal is local, so showing it the list is fine; the repo is not.
+cat >&2 <<MSG
 Requests to internal services are ordinary work and are NOT blocked:
-  plane.homelab, git-docs.homelab, 192.168.1.*, 127.0.0.1 / localhost
+  127.0.0.1 / localhost, and the hosts in AGENTS_INTERNAL_HOSTS
+  (~/.config/agents/env). Configured now: $( [ -n "$INTERNAL_ENTRIES" ] && tr '\n' ' ' <<<"$INTERNAL_ENTRIES" || echo "NONE, so every non-loopback write is refused; add the key in environment-secrets and re-run its install.sh" )
+MSG
+cat >&2 <<'MSG'
 If your request was refused and its target IS internal, name the host in the
 URL on the command line. A request whose URL the guard cannot see — `curl -K` /
 `--config` reads both URL and body from a file, and a URL held in a shell

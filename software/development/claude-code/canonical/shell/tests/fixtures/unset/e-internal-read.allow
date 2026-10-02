@@ -1,0 +1,1 @@
+curl -s http://plane.homelab/api/v1/workspaces/homelab/projects/

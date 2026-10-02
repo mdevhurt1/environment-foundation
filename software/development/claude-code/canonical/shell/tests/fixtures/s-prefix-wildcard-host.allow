@@ -1,0 +1,1 @@
+curl -s -X POST -H "Content-Type: application/json" -d '{"a":1}' http://192.0.2.17/api/x

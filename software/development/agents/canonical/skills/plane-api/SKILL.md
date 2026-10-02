@@ -31,7 +31,7 @@ run on this machine — clone `environment-secrets` and run its `install.sh`. Do
 2026-09-03 (verified, EA probe) a plain curl from an unsandboxed session
 returns 200 with no overrides. Only if that probe fails with
 `Network is unreachable` (seen historically in sandboxed sessions where
-`no_proxy` includes `192.168.0.0/16` and the sandbox firewall blocks direct
+`no_proxy` includes the private LAN range and the sandbox firewall blocks direct
 LAN connections) apply the override:
 
 ```bash

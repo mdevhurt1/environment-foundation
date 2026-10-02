@@ -1,8 +1,24 @@
 #!/usr/bin/env bash
-# A broken GPU should make only the live probe row fail when the watch is installed.
+# Description: Offline acceptance fixture for scripts/verify.sh. Stubs the
+#              probe, systemctl and the metric file in a temp HOME: a broken
+#              GPU must fail only the live probe row, and a never-run service
+#              with no metric file must fail acceptance.
+#              Touches no real unit, GPU or textfile directory.
+# Profiles:    workstation
+# Platforms:   ubuntu-24.04
+# Dependencies: bash, mktemp
+# Idempotent.
+
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+REPO_ROOT="$(cd "$here/../../../.." && pwd)"
+# shellcheck source=../../../../shared/logging.sh
+# shellcheck disable=SC1091
+source "$REPO_ROOT/shared/logging.sh"
+
+require_not_root
+
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/home/.local/bin" "$tmp/home/.local/share/node_exporter" \

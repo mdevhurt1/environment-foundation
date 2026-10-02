@@ -273,12 +273,26 @@ WS_RE=(
     ' (-d|-F|-T)[ =]?[^ -]'
     ' --(data|data-raw|data-binary|data-ascii|data-urlencode|json|form|form-string|upload-file)[= ]'
     ' (-K|--config)[= ]?(-|[^ -])'
-    ' --(post-data|post-file|method=(POST|PUT|PATCH|DELETE))'
+    ' --(post-data|post-file|body-data|body-file)[= ]'
+    ' --method[= ](POST|PUT|PATCH|DELETE)([^A-Za-z0-9_]|$)'
+)
+# Clustered short flags (`-sSXPOST`, `-sd x`) are curl's spelling, but `ls -ld`
+# is not: they count only in the text after the client word, so a read-only
+# `ssh h 'ls -ld d; command -v curl'` is not a body flag (review r2 ADJ-1).
+CLIENT_RE='(^|[[:space:];&|(`=,:])([^[:space:]]*/)?(curl|wget)([[:space:]]|$)'
+WS_CLUSTER_RE=(
+    ' -[A-Za-z]*X ?(POST|PUT|PATCH|DELETE)([^A-Za-z0-9_]|$)'
+    ' -[A-Za-z]*[dFT][ =]?[^ -]'
 )
 write_shaped_http() {
-    local re
+    local re args=$1
     for re in "${WS_RE[@]}"; do
         [[ "$1" =~ $re ]] && return 0
+    done
+    [[ "$args" =~ $CLIENT_RE ]] || return 1
+    args=" ${args#*"${BASH_REMATCH[0]}"}"
+    for re in "${WS_CLUSTER_RE[@]}"; do
+        [[ "$args" =~ $re ]] && return 0
     done
     return 1
 }
@@ -401,12 +415,12 @@ segments() {
             if (mask) { o = substr(o, 1, length(o) - length(raw)) "BODY"; mask = 0; return }
             if (bare ~ /(^|\/)curl$/) client = "curl"
             else if (bare ~ /(^|\/)wget$/) client = "wget"
-            if (bare ~ /^--(data|data-raw|data-binary|data-ascii|data-urlencode|json|form|form-string|header|referer|post-data|body-data)$/ \
-                || (client == "curl" && bare ~ /^-[dFHe]$/)) { mask = 1; return }
-            if (match(bare, /^--(data|data-raw|data-binary|data-ascii|data-urlencode|json|form|form-string|header|referer|post-data|body-data)=/))
+            if (bare ~ /^--(data|data-raw|data-binary|data-ascii|data-urlencode|json|form|form-string|header|referer|post-data|body-data|body-file)$/ \
+                || (client == "curl" && bare ~ /^-[A-Za-z]*[dFHe]$/)) { mask = 1; return }
+            if (match(bare, /^--(data|data-raw|data-binary|data-ascii|data-urlencode|json|form|form-string|header|referer|post-data|post-file|body-data|body-file)=/))
                 o = substr(o, 1, length(o) - length(raw)) substr(bare, 1, RLENGTH) "BODY"
-            else if (client == "curl" && bare ~ /^-[dFHe]./)
-                o = substr(o, 1, length(o) - length(raw)) substr(bare, 1, 2) "BODY"
+            else if (client == "curl" && match(bare, /^-[A-Za-z]*[dFHe]./))
+                o = substr(o, 1, length(o) - length(raw)) substr(bare, 1, RLENGTH - 1) "BODY"
         }
         function sep(c) { return c == "|" || c == ";" || c == "&" }
         { s = s $0 "\n" }
@@ -635,8 +649,8 @@ config_write_directive() {
 }
 raw_http_write() {
     local seg segs config_urls previous="" config_flag written
-    local client_re='(^|[[:space:];&|(`=,:])(curl|wget)([[:space:]]|$)'
-    grep -qE "${B}(curl|wget)\b" <<<"$nq" || return 1
+    local client_re=$CLIENT_RE
+    grep -qE "${B}([^ ]*/)?(curl|wget)\b" <<<"$nq" || return 1
     segs=$(segments)
     written=$(executed_written_sources)
     [ -n "$written" ] && segs+=$'\n'"$(written_segments "$written")"

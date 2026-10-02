@@ -1,0 +1,1 @@
+wget --method PUT --body-data x https://example.org/x

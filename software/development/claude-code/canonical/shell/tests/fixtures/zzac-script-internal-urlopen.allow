@@ -1,0 +1,1 @@
+python3 -c 'import urllib.request; urllib.request.urlopen("http://plane.homelab/api", data=b"ok")'

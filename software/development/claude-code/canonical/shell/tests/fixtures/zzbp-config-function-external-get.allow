@@ -1,0 +1,2 @@
+cfg() { printf 'header = "PRIVATE-TOKEN: %s"\n' "$GITLAB_TOKEN"; }
+tag=$(cfg | curl -sS -K - 'https://gitlab.com/api/v4/projects/1/repository/tags')

@@ -1,0 +1,5 @@
+cat > /tmp/probe.sh <<'EOF'
+curl -sS -X POST -d @body.json "$URL"
+while IFS= read -r l; do echo "$l"; done < /dev/null
+EOF
+bash -n /tmp/probe.sh && echo OK

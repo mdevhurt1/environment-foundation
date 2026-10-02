@@ -1,0 +1,5 @@
+python3 - <<'EOF'
+import os, urllib.request
+urllib.request.urlopen(os.environ["URL"],
+    data=b"http://localhost/help")
+EOF

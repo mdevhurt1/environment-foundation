@@ -1,0 +1,1 @@
+python3 -c 'import os, http.client; c.request("POST", os.environ["URL"], body="http://localhost/help")'

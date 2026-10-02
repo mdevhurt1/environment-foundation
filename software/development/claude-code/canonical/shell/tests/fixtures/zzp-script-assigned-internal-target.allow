@@ -1,0 +1,2 @@
+URL=http://plane.homelab/api
+python3 -c 'import requests; requests.post("'$URL'")'

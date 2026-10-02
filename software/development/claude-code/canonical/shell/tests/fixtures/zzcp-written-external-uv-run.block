@@ -1,0 +1,5 @@
+cat > post.py <<'EOF'
+import requests
+requests.post("https://api.example.com/items",data={})
+EOF
+uv run python3 post.py

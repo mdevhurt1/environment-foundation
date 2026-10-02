@@ -1,0 +1,7 @@
+python3 - <<'EOF'
+import json,urllib.request
+data={}
+url="https://example.com/api/items"
+data["items"]=json.load(urllib.request.urlopen(url))
+print(len(data))
+EOF

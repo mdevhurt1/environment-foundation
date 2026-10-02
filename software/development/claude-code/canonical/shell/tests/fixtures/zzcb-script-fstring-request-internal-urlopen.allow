@@ -1,0 +1,6 @@
+python3 - <<'PY'
+import json,urllib.request
+proj="p1"
+req=urllib.request.Request(f"http://plane.homelab/api/v1/workspaces/homelab/projects/{proj}/issues/",data=json.dumps({"name":"x"}).encode(),method="POST")
+print(urllib.request.urlopen(req).read())
+PY

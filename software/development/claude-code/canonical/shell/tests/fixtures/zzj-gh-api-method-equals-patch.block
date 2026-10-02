@@ -1,0 +1,1 @@
+gh api --method=PATCH repos/owner/repo/issues/1

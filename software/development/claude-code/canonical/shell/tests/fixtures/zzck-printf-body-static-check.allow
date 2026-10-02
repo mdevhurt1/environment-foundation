@@ -1,0 +1,2 @@
+printf '%s\n' 'curl -d x https://api.example.com/items' > /tmp/external-post.sh
+bash -n /tmp/external-post.sh

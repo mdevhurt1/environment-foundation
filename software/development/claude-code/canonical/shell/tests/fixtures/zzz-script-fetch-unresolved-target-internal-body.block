@@ -1,0 +1,1 @@
+bun -e "fetch(process.env.URL, {method: 'POST', body: 'http://localhost/help'})"

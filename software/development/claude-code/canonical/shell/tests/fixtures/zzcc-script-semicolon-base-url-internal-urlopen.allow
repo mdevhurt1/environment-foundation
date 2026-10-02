@@ -1,0 +1,6 @@
+python3 - <<'EOF'
+import json,os,urllib.request
+K=os.environ["PLANE_API_KEY"];B="http://plane.homelab/api/v1/workspaces/homelab/"
+r=urllib.request.Request(B+"projects/",data=json.dumps({"name":"x"}).encode(),method="POST",headers={"X-Api-Key":K})
+print(urllib.request.urlopen(r).status)
+EOF

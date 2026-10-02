@@ -1,0 +1,3 @@
+curl -K - "http://plane.homelab/api" <<'EOF'
+header = "Authorization: Bearer token"
+EOF

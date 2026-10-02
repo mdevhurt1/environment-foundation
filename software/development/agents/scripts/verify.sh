@@ -114,12 +114,19 @@ h=$(python3 - "$st" 2>&1 <<'PY'
 import json, os, sys
 try:
     d = json.load(open(sys.argv[1])).get('hooks') or {}
-    print(' '.join(sorted(e + ':' + os.path.basename(c['command'].split()[0]) for e, v in d.items() for g in v for c in g['hooks'])))
+    cmds = sorted((e, os.path.expandvars(os.path.expanduser(c['command'].split()[0]))) for e, v in d.items() for g in v for c in g['hooks'])
+    print(' '.join(e + ':' + os.path.basename(p) for e, p in cmds))
+    print(' '.join(p for e, p in cmds))   # line 2: the registered executables, $HOME expanded
 except FileNotFoundError: print('settings.json missing')
 except (ValueError, KeyError, TypeError, AttributeError, IndexError) as x: print('settings.json unreadable: %s' % (str(x) or type(x).__name__))
 PY
 )
-if [ "$h" = "PreToolUse:cc-outbound-guard.sh SessionStart:cc-memory-inject.sh" ]; then pass_row "hooks (PreToolUse cc-outbound-guard.sh, SessionStart cc-memory-inject.sh)"
+hp=$(sed -n 2p <<<"$h"); h=$(head -n1 <<<"$h")
+# The registered executable itself, not its name: it must be byte-identical to the canonical script the fixtures below test
+hbad=""; for p in $hp; do cmp -s "$p" "$REPO_ROOT/software/development/claude-code/canonical/shell/$(basename "$p")" && [ -x "$p" ] || hbad="$hbad $p"; done
+if [ "$h" = "PreToolUse:cc-outbound-guard.sh SessionStart:cc-memory-inject.sh" ] && [ -n "$hbad" ]; then
+    fail_row "hooks: registered executable missing or not the canonical script:$hbad (fix: bash $SCRIPT_DIR/install.sh, and point $st at the ~/.claude links)"
+elif [ "$h" = "PreToolUse:cc-outbound-guard.sh SessionStart:cc-memory-inject.sh" ]; then pass_row "hooks (PreToolUse cc-outbound-guard.sh, SessionStart cc-memory-inject.sh; each the canonical script)"
 elif [ "$h" = "settings.json missing" ]; then fail_row "hooks: $st missing (fix: bash $SCRIPT_DIR/install.sh seeds it from $seed)"
 else fail_row "hooks (${h:-none}; fix: copy the hooks block of $seed into $st)"; fi
 

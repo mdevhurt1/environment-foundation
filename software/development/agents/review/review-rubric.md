@@ -12,8 +12,9 @@ ruling: ~/vault/20-surface/company/tasks/day-plan-2026-09-25/rulings.md (US-7)
 Operator-owned and versioned (AI_ST-111, US-7). The text between the `BEGIN RUBRIC` and
 `END RUBRIC` markers is handed to every reviewer byte for byte by
 `tools/assemble_prompts.py`. Nothing outside the markers reaches a reviewer. There are no
-per-review edits: any change between the markers, however small, bumps `version` here and
-in the body's first line, and adds a changelog entry. Per-review context (what the
+per-review edits: any change between the markers, however small, bumps `version` here,
+in the body's first line, and in the output format's `RUBRIC:` line, and adds a changelog
+entry. Per-review context (what the
 artefact is, which sections changed recently) goes in the review brief, never in this
 file. See `README.md` for how to bump and cite it.
 

@@ -693,7 +693,15 @@ raw_http_write() {
             if config_stdin_text "$seg" "$previous"; then
                 [[ "$CONFIG_TEXT" == printf\ * ]] && CONFIG_TEXT=${CONFIG_TEXT#printf }
                 [[ "$CONFIG_TEXT" == echo\ * ]] && CONFIG_TEXT=${CONFIG_TEXT#echo }
-                config_urls=$(grep -iE '^[[:space:]]*(--)?url([[:space:]]*[=:]|[[:space:]])' <<<"${CONFIG_TEXT//\\n/$'\n'}")
+                if [[ "$CONFIG_TEXT" == *%* || "$CONFIG_TEXT" =~ (^|[[:space:]])(printf|echo)[[:space:]] ]]; then
+                    # Argument form: quote stripping joined the arguments, so
+                    # a url directive can start at any word, as the write
+                    # directives can (config_write_directive). Take each one
+                    # with its value (review r4 seat2-F1, seat3-F2, seat4-F1).
+                    config_urls=$(grep -oiE '(^|[[:space:]])(--)?url([[:space:]]*[=:]|[[:space:]])[[:space:]]*[^[:space:]]+' <<<"${CONFIG_TEXT//\\n/$'\n'}")
+                else
+                    config_urls=$(grep -iE '^[[:space:]]*(--)?url([[:space:]]*[=:]|[[:space:]])' <<<"${CONFIG_TEXT//\\n/$'\n'}")
+                fi
                 config_flag=$seg
                 config_flag=${config_flag//--config=-/}; config_flag=${config_flag//--config -/}
                 config_flag=${config_flag//-K-/}; config_flag=${config_flag//-K -/}
@@ -844,7 +852,20 @@ scripted_call_target() {
                 scan=${scan#*"$match"}
             done
         done <<<"${SCRIPT_SOURCE:-$1}"
-        if [[ "$SCRIPT_SOURCE" == *'<<'* ]]; then
+        # An interpreter argument is the call target only when the call reads
+        # argv, directly or through a variable assigned from it. Otherwise
+        # (`os.getenv(...)`, an unseen name) the target stays unresolved and
+        # the opener URL cannot stand in for it (review r4 seat3-F1).
+        local argv_tied=0
+        if [[ "$related_args" == *argv* ]]; then
+            argv_tied=1
+        else
+            for token in $related_args; do
+                [[ "$token" =~ ^[a-z_][a-z0-9_]*$ ]] || continue
+                [[ "${SCRIPT_SOURCE,,}" =~ (^|[^[:alnum:]_])${token}[[:space:]]*=[[:space:]]*[^[:space:]=]*argv ]] && { argv_tied=1; break; }
+            done
+        fi
+        if [ "$argv_tied" -eq 1 ] && [[ "$SCRIPT_SOURCE" == *'<<'* ]]; then
             # Only the interpreter's own arguments (`python3 - URL <<EOF`), not
             # a URL in an earlier command on the opener line (review r3 N1).
             head=${SCRIPT_SOURCE%%<<*}; head=${head##*[;&|]}

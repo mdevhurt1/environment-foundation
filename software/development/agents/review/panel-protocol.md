@@ -1,6 +1,6 @@
 ---
 name: panel-protocol
-version: 1.0.0
+version: 1.1.0
 owner: Marcus (operator)
 updated: 2026-10-02
 ruling: ~/vault/20-surface/company/tasks/day-plan-2026-09-25/rulings.md (US-8)
@@ -182,3 +182,4 @@ Name a void seat in the record. Never leave it out of the seat list.
 ## Changelog
 
 - **1.0.0** (2026-10-01): First version (AI_ST-112).
+- **1.1.0** (2026-10-02): Rule 1 aligned with rule 2 by operator ruling (B-S16).

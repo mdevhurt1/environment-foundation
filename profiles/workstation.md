@@ -37,6 +37,8 @@ Run all baseline steps in order:
 
 - [ ] [Performance Dashboard — install](../software/system/perf-dashboard/scripts/install.sh) `[workstation]` — three-tier glanceable system monitor (Vitals + Conky + Netdata)
 - [ ] [Performance Dashboard — configure](../software/system/perf-dashboard/scripts/configure.sh) `[workstation]`
+- [ ] [Ollama GPU watch — install](../software/system/ollama-gpu-watch/scripts/install.sh) `[workstation]` — GPU hosts running the `ollama` container only; 15-min user timer that fails loudly when Ollama falls back to CPU
+- [ ] [Ollama GPU watch — verify](../software/system/ollama-gpu-watch/scripts/verify.sh) `[workstation]`
 
 ### 4. Peripherals
 

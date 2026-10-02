@@ -1,0 +1,13 @@
+# Deployed by software/system/ollama-gpu-watch (environment-foundation).
+# One probe run. Exit 1 marks the unit failed, raises a desktop notification
+# and writes ollama_gpu_ok 0 to the node-exporter textfile directory.
+[Unit]
+Description=Probe whether Ollama is actually running on the GPU
+Documentation=file:%h/.local/bin/ollama-gpu-probe
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/ollama-gpu-probe --notify --textfile %h/.local/share/node_exporter/ollama_gpu_ok.prom
+TimeoutStartSec=120
+Nice=10
